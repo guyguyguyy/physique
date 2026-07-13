@@ -83,7 +83,7 @@ button{font:inherit;color:inherit;border:none;cursor:pointer;border-radius:14px}
 #tabs button{flex:1;background:none;padding:12px 0 9px;color:var(--faint);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;border-radius:0;display:flex;flex-direction:column;align-items:center;gap:4px}
 #tabs button.on{color:var(--volt)}
 #tabs svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-textarea,input[type=text],input[type=date],select{
+textarea,input[type=text],input[type=number],input[type=date],select{
   width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:14px;
   color:var(--text);font:inherit;padding:11px 13px;
 }
@@ -336,9 +336,9 @@ function viewHome(){
   <div class="card">${calendarHTML()}</div>
   <h2>Body trend</h2>
   <div class="statgrid">
-    <div class="stat"><div class="k">Weight</div><div class="v num">${latest?latest.weight.toFixed(1):"—"}<span class="small muted"> kg</span></div>
+    <div class="stat"><div class="k">Weight</div><div class="v num">${latest&&latest.weight!=null?latest.weight.toFixed(1):"—"}<span class="small muted"> kg</span></div>
       <div class="d ${dW==null?"flat":dW>0.05?"up":dW<-0.05?"down":"flat"}">${w7?("7-avg "+w7.toFixed(1)+(dW!=null?" ("+(dW>0?"+":"")+dW.toFixed(1)+")":"")):"no data"}</div>
-      ${spark(bodySorted.slice(-21).map(b=>b.weight),150,44)}</div>
+      ${spark(bodySorted.slice(-21).map(b=>b.weight).filter(v=>v!=null),150,44)}</div>
     <div class="stat"><div class="k">Waist</div><div class="v num">${latest&&latest.waist?latest.waist.toFixed(1):"—"}<span class="small muted"> cm</span></div>
       <div class="d flat">${g7?("7-avg "+g7.toFixed(1)):"no data"}</div>
       ${spark(bodySorted.slice(-21).map(b=>b.waist).filter(v=>v!=null),150,44)}</div>
@@ -501,13 +501,6 @@ window.saveDayNote=function(v){
 function viewLog(){
   const t=today();
   const ex=S.body.find(b=>b.date===t);
-  const sorted=[...S.body].sort((a,b)=>b.date.localeCompare(a.date));
-  if(bw===null) bw=ex?ex.weight:(sorted[0]?sorted[0].weight:67.5);
-  if(bg===null) bg=ex?(ex.waist||74):(sorted[0]&&sorted[0].waist?sorted[0].waist:74);
-  const lastScan=[...S.scans].sort((a,b)=>b.date.localeCompare(a.date))[0];
-  if(scw===null) scw=lastScan?lastScan.weight:bw;
-  if(scm===null) scm=lastScan?lastScan.muscle:31;
-  if(scf===null) scf=lastScan?lastScan.fat:16.5;
   return `<h1>Log <span class="thin small">${esc(t)}</span></h1>
   <h2>Nutrition · 5 seconds</h2>
   <div class="card">
@@ -518,17 +511,21 @@ function viewLog(){
   </div>
   <h2>Sleep last night</h2>
   <div class="card"><div class="stepper" style="max-width:240px"><button onclick="sleepBump(-0.5)">−</button><div class="val num grow">${(()=>{const n=nutritionFor(t);return n&&n.sleepH!=null?n.sleepH:"—";})()}<span class="tiny muted"> h</span></div><button onclick="sleepBump(0.5)">+</button></div></div>
-  <h2>Body</h2>
+  <h2>Body · fill what you have</h2>
   <div class="card">
-    <div class="q"><label>Weight kg</label><div class="stepper"><button onclick="bB('w',-0.1)">−</button><div class="val num grow">${bw.toFixed(1)}</div><button onclick="bB('w',0.1)">+</button></div></div>
-    <div class="q"><label>Waist cm</label><div class="stepper"><button onclick="bB('g',-0.5)">−</button><div class="val num grow">${bg.toFixed(1)}</div><button onclick="bB('g',0.5)">+</button></div></div>
+    <div class="row">
+      <div class="q grow"><label>Weight kg</label><input type="number" inputmode="decimal" step="0.05" id="inW" placeholder="—" value="${ex&&ex.weight!=null?ex.weight:""}"></div>
+      <div class="q grow"><label>Waist cm</label><input type="number" inputmode="decimal" step="0.1" id="inG" placeholder="—" value="${ex&&ex.waist!=null?ex.waist:""}"></div>
+    </div>
     <button class="btn btn-volt" onclick="saveBody()">Save ${ex?"(update today)":"today"}</button>
   </div>
   <h2>Body scan · Accuniq days</h2>
   ${scanOpen?`<div class="card">
-    <div class="q"><label>Scan weight kg</label><div class="stepper"><button onclick="bS('w',-0.1)">−</button><div class="val num grow">${scw.toFixed(1)}</div><button onclick="bS('w',0.1)">+</button></div></div>
-    <div class="q"><label>Muscle kg</label><div class="stepper"><button onclick="bS('m',-0.1)">−</button><div class="val num grow">${scm.toFixed(1)}</div><button onclick="bS('m',0.1)">+</button></div></div>
-    <div class="q"><label>Body fat %</label><div class="stepper"><button onclick="bS('f',-0.1)">−</button><div class="val num grow">${scf.toFixed(1)}</div><button onclick="bS('f',0.1)">+</button></div></div>
+    <div class="row">
+      <div class="q grow"><label>Weight kg</label><input type="number" inputmode="decimal" step="0.05" id="inSW" placeholder="66.7"></div>
+      <div class="q grow"><label>Muscle kg</label><input type="number" inputmode="decimal" step="0.05" id="inSM" placeholder="31.1"></div>
+      <div class="q grow"><label>Fat %</label><input type="number" inputmode="decimal" step="0.05" id="inSF" placeholder="16.6"></div>
+    </div>
     <button class="btn btn-volt" onclick="saveScan()">Save scan</button></div>`
   :`<button class="btn btn-ghost" onclick="scanOpen=true;render()">+ Add scan result</button>`}
   <h2>Day note · optional</h2>
@@ -537,15 +534,21 @@ function viewLog(){
   <div class="card"><table><tr><th>Date</th><th class="num">kg</th><th class="num">cm</th><th>Food</th></tr>
   ${Array.from({length:7},(_,i)=>{ const d=addDays(t,-i); const b=S.body.find(x=>x.date===d); const n=nutritionFor(d);
     const f=n&&n.protein&&n.calories?(n.protein==="yes"&&n.calories==="yes"?"🟢":(n.protein==="no"||n.calories==="no"?"🔴":"🟡")):"—";
-    return `<tr><td>${d.slice(5)}</td><td class="num">${b?b.weight.toFixed(1):"—"}</td><td class="num">${b&&b.waist?b.waist.toFixed(1):"—"}</td><td>${f}</td></tr>`; }).join("")}
+    return `<tr><td>${d.slice(5)}</td><td class="num">${b&&b.weight!=null?b.weight.toFixed(1):"—"}</td><td class="num">${b&&b.waist!=null?b.waist.toFixed(1):"—"}</td><td>${f}</td></tr>`; }).join("")}
   </table></div>`;
 }
-window.bB=function(f,d){ if(f==="w")bw=Math.round((bw+d)*10)/10; else bg=Math.round((bg+d)*10)/10; render(); };
-window.bS=function(f,d){ if(f==="w")scw=Math.round((scw+d)*10)/10; else if(f==="m")scm=Math.round((scm+d)*10)/10; else scf=Math.round((scf+d)*10)/10; render(); };
-window.saveBody=function(){ const t=today(); const i=S.body.findIndex(b=>b.date===t);
-  const rec={date:t,weight:bw,waist:bg}; if(i>=0)S.body[i]=rec; else S.body.push(rec); save(); toast("Body saved"); render(); };
-window.saveScan=function(){ const t=today(); S.scans=S.scans.filter(s=>s.date!==t);
-  S.scans.push({date:t,weight:scw,muscle:scm,fat:scf,device:"Accuniq"}); scanOpen=false; save(); toast("Scan saved"); render(); };
+const numOrNull=id=>{ const v=document.getElementById(id).value.trim(); return v===""?null:parseFloat(v); };
+window.saveBody=function(){ const t=today();
+  const w=numOrNull("inW"), g=numOrNull("inG");
+  if(w==null&&g==null){ toast("Nothing to save",true); return; }
+  const i=S.body.findIndex(b=>b.date===t);
+  const rec={date:t,weight:w,waist:g};
+  if(i>=0)S.body[i]=rec; else S.body.push(rec); save(); toast("Body saved"); render(); };
+window.saveScan=function(){ const t=today();
+  const w=numOrNull("inSW"), m=numOrNull("inSM"), f=numOrNull("inSF");
+  if(w==null||m==null||f==null){ toast("Fill all 3 scan numbers",true); return; }
+  S.scans=S.scans.filter(s=>s.date!==t);
+  S.scans.push({date:t,weight:w,muscle:m,fat:f,device:"Accuniq"}); scanOpen=false; save(); toast("Scan saved"); render(); };
 
 /* ---------- REVIEW ---------- */
 function windowStart(){ return S.settings.lastReview||addDays(today(),-28); }
@@ -559,7 +562,8 @@ function generateReview(){
   const sess=S.sessions.filter(inWin).sort((a,b)=>a.date.localeCompare(b.date));
   const nutri=S.nutrition.filter(x=>inWin(x)&&x.protein&&x.calories);
   const totalDays=daysBetween(from,t);
-  const ws=body.map(b=>b.weight), gs=body.map(b=>b.waist).filter(v=>v!=null);
+  const wEntries=body.filter(b=>b.weight!=null);
+  const ws=wEntries.map(b=>b.weight), gs=body.map(b=>b.waist).filter(v=>v!=null);
   const avg=a=>a.length?(a.reduce((s,v)=>s+v,0)/a.length):null;
   const cnt=(a,f,v)=>a.filter(x=>x[f]===v).length;
   // progression events
@@ -597,7 +601,7 @@ function generateReview(){
   L.push("");
   L.push("## OBJECTIVE FACTS");
   L.push("");
-  L.push("Weight: "+(ws.length?ws.length+" entries · avg "+avg(ws).toFixed(2)+" kg · range "+Math.min(...ws).toFixed(1)+"-"+Math.max(...ws).toFixed(1)+" · latest "+ws[ws.length-1].toFixed(1)+" kg ("+body[body.length-1].date+")":"UNKNOWN — no entries"));
+  L.push("Weight: "+(ws.length?ws.length+" entries · avg "+avg(ws).toFixed(2)+" kg · range "+Math.min(...ws).toFixed(1)+"-"+Math.max(...ws).toFixed(1)+" · latest "+ws[ws.length-1].toFixed(1)+" kg ("+wEntries[wEntries.length-1].date+")":"UNKNOWN — no entries"));
   L.push("Waist: "+(gs.length?gs.length+" entries · avg "+avg(gs).toFixed(2)+" cm · range "+Math.min(...gs).toFixed(1)+"-"+Math.max(...gs).toFixed(1)+" · latest "+gs[gs.length-1].toFixed(1)+" cm":"UNKNOWN — no entries"));
   if(scans.length){ scans.forEach(s=>L.push("Body scan "+s.date+": "+s.weight+" kg · "+s.muscle+" kg muscle · "+s.fat+"% fat ("+(s.device||"Accuniq")+")"));
     if(prevScan) L.push("Previous scan "+prevScan.date+": "+prevScan.weight+" kg · "+prevScan.muscle+" kg muscle · "+prevScan.fat+"% fat");
