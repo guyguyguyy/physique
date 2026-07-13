@@ -55,8 +55,8 @@ button{font:inherit;color:inherit;border:none;cursor:pointer;border-radius:14px}
 .sessbtn b{display:block;font-size:15px;font-weight:900;text-transform:uppercase;letter-spacing:.02em}
 .sessbtn span{font-size:12px;color:var(--muted)}
 .stepper{display:flex;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:14px;overflow:hidden}
-.stepper button{background:transparent;padding:12px 16px;font-size:22px;font-weight:800;color:var(--volt);border-radius:0;line-height:1}
-.stepper .val{min-width:64px;text-align:center;font-weight:900;font-size:18px}
+.stepper button{background:transparent;padding:12px 13px;font-size:22px;font-weight:800;color:var(--volt);border-radius:0;line-height:1}
+.stepper .val{min-width:78px;text-align:center;font-weight:900;font-size:16px;white-space:nowrap;overflow:hidden}
 .setrow{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
 .setrow:first-of-type{border-top:none}
 .setnum{width:18px;color:var(--faint);font-size:13px;font-weight:900}
@@ -170,6 +170,10 @@ function load(){
     settings:{restSec:120,phase:"Phase 4",proteinTarget:"160-170 g",calT:"1750-1850 kcal",calR:"1600-1700 kcal",reviewDate:"",lastReview:""},
     templates:blankTemplates(), sessions:[], body:[], scans:[], nutrition:[], plans:[]
   };
+  // migrations / defaults for newer versions
+  if(S.settings.cardioLabel==null) S.settings.cardioLabel="Incline walk · incline 13 · speed 3";
+  if(S.settings.cardioKcalMin==null) S.settings.cardioKcalMin=8;
+  if(S.settings.lastBackup==null) S.settings.lastBackup="";
   save();
 }
 function save(){ localStorage.setItem(KEY,JSON.stringify(S)); }
@@ -260,6 +264,37 @@ function last7avg(arr,field){
   const x=[...arr].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,7).map(r=>r[field]).filter(v=>v!=null);
   return x.length?x.reduce((s,v)=>s+v,0)/x.length:null;
 }
+const toKg=(w,unit)=>unit==="lb"?w*0.4536:w;
+function cardioMinutes(s){
+  if(s.cardioDone===false) return 0;
+  if(s.cardioMin) return s.cardioMin;
+  const src=s.cardio||""; if(s.cardioDone===null&&!src) return 0;
+  const m=src.match(/(\d+)\s*min/i); return m?+m[1]:0;
+}
+function strengthIndex(){
+  // mean % change of top-set load per exercise: first logged vs latest (needs 2+ dated points)
+  const first={}, last={};
+  S.sessions.filter(s=>s.entries.length).forEach(s=>s.entries.forEach(e=>{
+    if(!e.sets.length)return;
+    const w=toKg(e.sets[0].w,e.unit);
+    if(first[e.name]==null){ first[e.name]={w,date:s.date}; }
+    last[e.name]={w,date:s.date};
+  }));
+  const ratios=Object.keys(first).filter(k=>last[k].date>first[k].date&&first[k].w>0).map(k=>last[k].w/first[k].w);
+  if(!ratios.length) return null;
+  return (ratios.reduce((a,b)=>a+b,0)/ratios.length-1)*100;
+}
+function weeklyTonnage(){
+  // last 8 weeks total kg lifted (w×r, lb converted)
+  const t=today(), weeks=[];
+  for(let i=7;i>=0;i--){
+    const end=addDays(t,-7*i), start=addDays(end,-6);
+    let sum=0;
+    S.sessions.forEach(s=>{ if(s.date>=start&&s.date<=end) s.entries.forEach(e=>e.sets.forEach(st=>sum+=toKg(st.w,e.unit)*st.r)); });
+    weeks.push(Math.round(sum));
+  }
+  return weeks;
+}
 function viewHome(){
   const t=today();
   const stk=streak();
@@ -272,7 +307,14 @@ function viewHome(){
   const rd=S.settings.reviewDate;
   const dLeft=rd?daysBetween(t,rd):null;
   const weekStart=addDays(t,-6);
-  const sess7=S.sessions.filter(s=>s.date>=weekStart&&s.date<=t).length;
+  const sess7=S.sessions.filter(s=>s.date>=weekStart&&s.date<=t&&s.sessionKey!=="rest").length;
+  const cardio7=S.sessions.filter(s=>s.date>=weekStart&&s.date<=t).reduce((sum,s)=>sum+cardioMinutes(s),0);
+  const cardioKcal=Math.round(cardio7*(S.settings.cardioKcalMin||8));
+  const sIdx=strengthIndex();
+  const tonnage=weeklyTonnage();
+  const scansSorted=[...S.scans].sort((a,b)=>a.date.localeCompare(b.date));
+  const backupAge=S.settings.lastBackup?daysBetween(S.settings.lastBackup,t):null;
+  const needBackup=(S.sessions.some(s=>!String(s.id).startsWith("imp"))||S.nutrition.length)&&(backupAge==null||backupAge>14);
   const nDays7=(()=>{ let c=0; for(let i=0;i<7;i++){ const n=nutritionFor(addDays(t,-i)); if(n&&n.protein&&n.calories)c++; } return c; })();
   const greens7=(()=>{ let c=0; for(let i=0;i<7;i++){ const n=nutritionFor(addDays(t,-i)); if(n&&n.protein==="yes"&&n.calories==="yes")c++; } return c; })();
   const setupNeeded=SESSION_KEYS.every(k=>!S.templates[k].exercises.length);
@@ -299,8 +341,30 @@ function viewHome(){
       <div class="d flat">${g7?("7-avg "+g7.toFixed(1)):"no data"}</div>
       ${spark(bodySorted.slice(-21).map(b=>b.waist).filter(v=>v!=null),150,44)}</div>
   </div>
-  ${scan?`<div class="card row"><div class="grow"><div class="tiny muted" style="text-transform:uppercase;letter-spacing:.1em;font-weight:800">Last scan · ${esc(scan.date)}</div>
-    <div class="num" style="font-weight:900;font-size:19px;margin-top:3px">${scan.fat}% fat · ${scan.muscle} kg muscle · ${scan.weight} kg</div></div></div>`:""}
+  <h2>Body composition · Accuniq</h2>
+  <div class="statgrid">
+    <div class="stat"><div class="k">Body fat</div><div class="v num">${scan?scan.fat.toFixed(1):"—"}<span class="small muted"> %</span></div>
+      <div class="d flat">${scansSorted.length>1?("prev "+scansSorted[scansSorted.length-2].fat.toFixed(1)+"% ("+scansSorted[scansSorted.length-2].date.slice(5)+")"):"one scan"}</div>
+      ${spark(scansSorted.slice(-12).map(s=>s.fat),150,44)}</div>
+    <div class="stat"><div class="k">Muscle</div><div class="v num">${scan?scan.muscle.toFixed(1):"—"}<span class="small muted"> kg</span></div>
+      <div class="d flat">${scan?("scan "+scan.date.slice(5)):"no scans"}</div>
+      ${spark(scansSorted.slice(-12).map(s=>s.muscle),150,44)}</div>
+  </div>
+  <h2>Performance</h2>
+  <div class="statgrid">
+    <div class="stat"><div class="k">Strength index</div>
+      <div class="v num">${sIdx==null?"—":(sIdx>=0?"+":"")+sIdx.toFixed(1)+"%"}</div>
+      <div class="d ${sIdx==null?"flat":sIdx>0?"down":"flat"}">${sIdx==null?"log sessions to build":"avg load vs first log"}</div>
+      ${tonnage.some(v=>v>0)?spark(tonnage,150,44):""}
+      <div class="tiny muted num" style="margin-top:2px">${tonnage.some(v=>v>0)?"weekly volume · "+tonnage[tonnage.length-1].toLocaleString()+" kg this week":""}</div></div>
+    <div class="stat"><div class="k">Cardio · 7d</div>
+      <div class="v num">${cardio7}<span class="small muted"> min</span></div>
+      <div class="d flat">≈ ${cardioKcal} kcal burned</div>
+      <div class="tiny muted" style="margin-top:6px">${esc(S.settings.cardioLabel)}</div></div>
+  </div>
+  ${needBackup?`<div class="card" style="border-color:var(--amber)"><b style="color:var(--amber)">Back up your data.</b>
+    <div class="small muted" style="margin:4px 0 10px">${backupAge==null?"No backup yet":backupAge+" days since last backup"}. Data lives only on this phone.</div>
+    <button class="btn btn-sm" onclick="tab='data';render()">Go to Data → backup / export</button></div>`:""}
   `;
 }
 
@@ -316,13 +380,22 @@ function suggestion(ex,last){
   if(top) return {cls:"up",text:"All sets at top reps — ready for "+fmtNum(last.sets[0].w+(ex.inc||2.5))+" "+ex.unit};
   return {cls:"beat",text:"Beat last reps at "+fmtNum(last.sets[0].w)+" "+ex.unit};
 }
+function lastDateOf(key){ for(let i=S.sessions.length-1;i>=0;i--) if(S.sessions[i].sessionKey===key) return S.sessions[i].date; return null; }
 function viewTrain(){
-  const cards=SESSION_KEYS.map(k=>{ const t=S.templates[k], last=lastSessionOf(k);
-    return `<button class="sessbtn" onclick="startSession('${k}')"><b>${esc(t.name)}</b><span>${t.exercises.length?t.exercises.length+" exercises · last "+(last?last.date:"never"):"empty — set up plan"}</span></button>`; }).join("");
+  const cards=SESSION_KEYS.map(k=>{ const t=S.templates[k], last=lastDateOf(k);
+    return `<button class="sessbtn" onclick="startSession('${k}')"><b>${esc(t.name)}</b><span>${t.exercises.length?t.exercises.length+" exercises · last "+(last||"never"):"empty — set up plan"}</span></button>`; }).join("");
   return `<h1>Train</h1><div class="sessgrid">${cards}</div>
+  <div style="height:10px"></div>
+  <button class="btn btn-ghost" onclick="logRestDay()">Log today as Rest Day</button>
   <h2>Rest timer</h2><div class="card"><div class="scale">${[90,120,150,180].map(s=>`<button class="${S.settings.restSec===s?"on":""}" onclick="setRest(${s})">${s}s</button>`).join("")}</div></div>`;
 }
 window.setRest=s=>{ S.settings.restSec=s; save(); render(); };
+window.logRestDay=function(){
+  const t=today();
+  if(S.sessions.some(s=>s.date===t)){ if(!confirm("Something is already logged today. Add a Rest Day anyway?")) return; }
+  S.sessions.push({id:String(Date.now()),date:t,sessionKey:"rest",name:"Rest Day",entries:[],cardio:"",cardioDone:null,cardioMin:0,abs:"",absDone:null,checkin:null,note:""});
+  save(); toast("Rest day logged"); tab="home"; render();
+};
 window.startSession=function(key){
   const t=S.templates[key];
   if(!t.exercises.length){ toast("Template empty — import your plan first",true); return; }
@@ -330,7 +403,7 @@ window.startSession=function(key){
     entries:t.exercises.map(ex=>{ const last=lastEntryFor(key,ex.name);
       return { name:ex.name, unit:ex.unit, perSide:!!ex.perSide,
         sets:Array.from({length:ex.sets},(_,i)=>({ w:last?last.sets[0].w:ex.load, r:(last&&last.sets[i]?last.sets[i].r:ex.repLow), done:false })) }; }),
-    cardio:t.cardio, cardioDone:null, abs:t.abs, absDone:null, checkin:null };
+    cardio:t.cardio, cardioDone:null, cardioMin:20, abs:t.abs, absDone:null, checkin:null, note:"" };
   render();
 };
 function viewSession(){
@@ -352,9 +425,14 @@ function viewSession(){
   <h2>Abs</h2><div class="card"><div class="small muted" style="margin-bottom:10px">${esc(active.abs||"—")}</div>
     <div class="scale"><button class="${active.absDone===true?"on":""}" onclick="active.absDone=true;render()">Done</button>
     <button class="${active.absDone===false?"on neg":""}" onclick="active.absDone=false;render()">Skipped</button></div></div>
-  <h2>Cardio</h2><div class="card"><div class="small muted" style="margin-bottom:10px">${esc(active.cardio||"—")}</div>
+  <h2>Cardio</h2><div class="card"><div class="small muted" style="margin-bottom:10px">${esc(S.settings.cardioLabel||active.cardio||"—")}</div>
     <div class="scale"><button class="${active.cardioDone===true?"on":""}" onclick="active.cardioDone=true;render()">Done</button>
-    <button class="${active.cardioDone===false?"on neg":""}" onclick="active.cardioDone=false;render()">Skipped</button></div></div>
+    <button class="${active.cardioDone===false?"on neg":""}" onclick="active.cardioDone=false;render()">Skipped</button></div>
+    ${active.cardioDone===true?`<div class="q" style="margin:12px 0 0"><label>Minutes</label>
+      <div class="stepper" style="max-width:220px"><button onclick="cardioBump(-5)">−</button><div class="val num grow">${active.cardioMin}</div><button onclick="cardioBump(5)">+</button></div></div>`:""}
+  </div>
+  <h2>Session note · optional</h2>
+  <div class="card"><textarea id="sessNote" rows="2" placeholder="anything unusual — machine busy, pain, gym change…" onchange="active.note=this.value">${esc(active.note||"")}</textarea></div>
   <div style="margin:18px 0 10px"><button class="btn btn-volt" style="padding:17px" onclick="finishSession()">Finish session</button></div>
   <button class="btn btn-ghost" onclick="cancelSession()">Discard</button>`;
 }
@@ -366,17 +444,17 @@ window.bump=function(ei,si,f,dir){
 };
 window.toggleSet=function(ei,si){ const st=active.entries[ei].sets[si]; st.done=!st.done; if(st.done)Timer.start(S.settings.restSec); render(); };
 window.allDone=function(ei){ active.entries[ei].sets.forEach(s=>s.done=true); Timer.start(S.settings.restSec); render(); };
+window.cardioBump=function(d){ const n=document.getElementById("sessNote"); if(n)active.note=n.value; active.cardioMin=Math.max(0,active.cardioMin+d); render(); };
 window.cancelSession=function(){ if(confirm("Discard this session?")){ active=null; Timer.stop(); render(); } };
 window.finishSession=function(){
-  qa={sleepH:7,sleepQ:0,energy:0,notes:""};
+  const n=document.getElementById("sessNote"); if(n)active.note=n.value;
+  qa={sleepQ:0,energy:0,notes:""};
   document.getElementById("view").innerHTML=viewCheckin(); window.scrollTo(0,0);
 };
 function scaleBtns(f,n){ let h='<div class="scale">'; for(let i=1;i<=n;i++) h+=`<button class="${qa[f]===i?"on":""}" onclick="qset('${f}',${i})">${i}</button>`; return h+"</div>"; }
 function viewCheckin(){
   return `<h1>Check-in</h1><div class="card">
-    <div class="q"><label>Sleep last night · hours</label>
-      <div class="stepper" style="max-width:220px"><button onclick="qsleep(-0.5)">−</button><div class="val num grow">${qa.sleepH}</div><button onclick="qsleep(0.5)">+</button></div></div>
-    <div class="q"><label>Sleep quality</label>${scaleBtns("sleepQ",5)}</div>
+    <div class="q"><label>Sleep quality last night</label>${scaleBtns("sleepQ",5)}</div>
     <div class="q"><label>Energy today</label>${scaleBtns("energy",5)}</div>
     <div class="q"><label>Notes · soreness, form</label><textarea id="qnotes" rows="2" placeholder="optional">${esc(qa.notes)}</textarea></div>
   </div>
@@ -384,7 +462,6 @@ function viewCheckin(){
   <div style="height:10px"></div><button class="btn btn-ghost" onclick="render()">← Back</button>`;
 }
 window.qset=function(f,v){ qa[f]=v; const n=document.getElementById("qnotes"); if(n)qa.notes=n.value; document.getElementById("view").innerHTML=viewCheckin(); };
-window.qsleep=function(d){ qa.sleepH=Math.max(0,Math.min(14,qa.sleepH+d)); const n=document.getElementById("qnotes"); if(n)qa.notes=n.value; document.getElementById("view").innerHTML=viewCheckin(); };
 window.saveSession=function(){
   const n=document.getElementById("qnotes"); if(n)qa.notes=n.value;
   active.checkin=qa;
@@ -409,6 +486,16 @@ window.setNutri=function(f,v){
   n[f]=n[f]===v?"":v; save(); render();
   if(n.protein&&n.calories) toast("Nutrition logged");
 };
+window.sleepBump=function(d){
+  let n=nutritionFor(today());
+  if(!n){ n={date:today(),protein:"",calories:""}; S.nutrition.push(n); }
+  n.sleepH=Math.max(0,Math.min(14,(n.sleepH==null?7:n.sleepH)+d)); save(); render();
+};
+window.saveDayNote=function(v){
+  let n=nutritionFor(today());
+  if(!n){ n={date:today(),protein:"",calories:""}; S.nutrition.push(n); }
+  n.note=v; save(); toast("Note saved");
+};
 function viewLog(){
   const t=today();
   const ex=S.body.find(b=>b.date===t);
@@ -427,6 +514,8 @@ function viewLog(){
     <div class="q" style="margin-bottom:2px"><label>Calories on plan? <span class="muted">(${esc(S.settings.calT)} train · ${esc(S.settings.calR)} rest)</span></label>
       ${tri("calories",null,["On plan","Close","Off"],["yes","close","no"])}</div>
   </div>
+  <h2>Sleep last night</h2>
+  <div class="card"><div class="stepper" style="max-width:240px"><button onclick="sleepBump(-0.5)">−</button><div class="val num grow">${(()=>{const n=nutritionFor(t);return n&&n.sleepH!=null?n.sleepH:"—";})()}<span class="tiny muted"> h</span></div><button onclick="sleepBump(0.5)">+</button></div></div>
   <h2>Body</h2>
   <div class="card">
     <div class="q"><label>Weight kg</label><div class="stepper"><button onclick="bB('w',-0.1)">−</button><div class="val num grow">${bw.toFixed(1)}</div><button onclick="bB('w',0.1)">+</button></div></div>
@@ -440,6 +529,8 @@ function viewLog(){
     <div class="q"><label>Body fat %</label><div class="stepper"><button onclick="bS('f',-0.1)">−</button><div class="val num grow">${scf.toFixed(1)}</div><button onclick="bS('f',0.1)">+</button></div></div>
     <button class="btn btn-volt" onclick="saveScan()">Save scan</button></div>`
   :`<button class="btn btn-ghost" onclick="scanOpen=true;render()">+ Add scan result</button>`}
+  <h2>Day note · optional</h2>
+  <div class="card"><textarea rows="2" placeholder="anything worth remembering — big dinner out, sick, travel…" onchange="saveDayNote(this.value)">${esc((nutritionFor(t)||{}).note||"")}</textarea></div>
   <h2>Recent</h2>
   <div class="card"><table><tr><th>Date</th><th class="num">kg</th><th class="num">cm</th><th>Food</th></tr>
   ${Array.from({length:7},(_,i)=>{ const d=addDays(t,-i); const b=S.body.find(x=>x.date===d); const n=nutritionFor(d);
@@ -483,9 +574,13 @@ function generateReview(){
     }
     seen[k]=w;
   }));
-  const sleepA=avg(sess.map(s=>s.checkin&&s.checkin.sleepH).filter(v=>v!=null));
+  const dailySleep=S.nutrition.filter(x=>inWin(x)&&x.sleepH!=null).map(x=>x.sleepH);
+  const sleepA=avg(dailySleep.length?dailySleep:sess.map(s=>s.checkin&&s.checkin.sleepH).filter(v=>v!=null));
   const energyA=avg(sess.map(s=>s.checkin&&s.checkin.energy).filter(v=>v));
-  const absDone=sess.filter(s=>s.absDone===true).length, cardioDone=sess.filter(s=>s.cardioDone===true).length;
+  const train=sess.filter(s=>s.sessionKey!=="rest"), restDays=sess.length-train.length;
+  const absDone=train.filter(s=>s.absDone===true).length, cardioDone=train.filter(s=>s.cardioDone===true).length;
+  const cardioTot=sess.reduce((sum,s)=>sum+cardioMinutes(s),0);
+  const dayNotes=S.nutrition.filter(x=>inWin(x)&&x.note).map(x=>x.date+": "+x.note);
   const L=[];
   L.push("# COACH REVIEW PACKAGE");
   L.push("");
@@ -502,10 +597,11 @@ function generateReview(){
     if(prevScan) L.push("Previous scan "+prevScan.date+": "+prevScan.weight+" kg · "+prevScan.muscle+" kg muscle · "+prevScan.fat+"% fat");
   } else L.push("Body scans: none in window"+(prevScan?" (last: "+prevScan.date+", "+prevScan.fat+"% fat)":""));
   L.push("");
-  L.push("Training: "+sess.length+" sessions in "+totalDays+" days");
-  const byType={}; sess.forEach(s=>byType[s.name]=(byType[s.name]||0)+1);
+  L.push("Training: "+train.length+" sessions in "+totalDays+" days"+(restDays?" · "+restDays+" logged rest days":""));
+  const byType={}; train.forEach(s=>byType[s.name]=(byType[s.name]||0)+1);
   Object.entries(byType).forEach(([n,c])=>L.push("- "+n+": "+c));
-  L.push("Abs done: "+absDone+"/"+sess.length+" · Cardio done: "+cardioDone+"/"+sess.length);
+  L.push("Abs done: "+absDone+"/"+train.length+" · Cardio done: "+cardioDone+"/"+train.length);
+  L.push("Cardio volume: "+cardioTot+" min total (~"+Math.round(cardioTot*(S.settings.cardioKcalMin||8))+" kcal at "+(S.settings.cardioKcalMin||8)+" kcal/min) · mode: "+S.settings.cardioLabel);
   L.push("");
   L.push("Progression events:");
   if(prog.length) prog.forEach(p=>L.push("- "+p)); else L.push("- none detected");
@@ -522,10 +618,11 @@ function generateReview(){
   L.push("");
   L.push("## RECOVERY");
   L.push("");
-  L.push("Avg sleep: "+(sleepA?sleepA.toFixed(1)+" h ("+sess.filter(s=>s.checkin).length+" check-ins)":"UNKNOWN"));
+  L.push("Avg sleep: "+(sleepA?sleepA.toFixed(1)+" h ("+(dailySleep.length||sess.filter(s=>s.checkin).length)+" nights)":"UNKNOWN"));
   L.push("Avg energy: "+(energyA?energyA.toFixed(1)+"/5":"UNKNOWN"));
-  const notes=sess.filter(s=>s.checkin&&s.checkin.notes).map(s=>s.date+": "+s.checkin.notes);
+  const notes=sess.filter(s=>(s.checkin&&s.checkin.notes)||s.note).map(s=>s.date+": "+[s.note,s.checkin&&s.checkin.notes].filter(Boolean).join(" · "));
   if(notes.length){ L.push("Session notes:"); notes.forEach(n=>L.push("- "+n)); }
+  if(dayNotes.length){ L.push("Day notes:"); dayNotes.forEach(n=>L.push("- "+n)); }
   L.push("");
   L.push("## UNKNOWNS / LIMITATIONS");
   L.push("");
@@ -533,7 +630,8 @@ function generateReview(){
   if(ws.length&&ws.length<totalDays/3) L.push("- Sparse weigh-ins ("+ws.length+"/"+totalDays+" days)");
   if(nutri.length<totalDays*0.7) L.push("- Nutrition adherence answered on only "+nutri.length+"/"+totalDays+" days");
   L.push("- Calories/macros are adherence flags, not measured values");
-  L.push("- Steps and detailed sleep: not tracked");
+  L.push("- Cardio kcal is an estimate ("+(S.settings.cardioKcalMin||8)+" kcal/min assumption)");
+  L.push("- Steps: not tracked");
   L.push("");
   L.push("## INSTRUCTIONS FOR COACH (ChatGPT)");
   L.push("");
@@ -662,15 +760,15 @@ function buildCSVs(){
     ...[...S.scans].sort((a,b)=>a.date.localeCompare(b.date)).map(s=>[s.date,s.weight,s.muscle,s.fat,s.device||"Accuniq",ph,""])]);
   files["training_log.csv"]=toCsv([["date","phase","session_label","cardio","abs","notes"],
     ...S.sessions.map(s=>[s.date,ph,s.name,
-      s.cardioDone===true?s.cardio:(s.cardioDone===false?"Skipped":""),
+      s.cardioDone===true?((s.cardioMin?S.settings.cardioLabel+" "+s.cardioMin+" min":s.cardio)):(s.cardioDone===false?"Skipped":""),
       s.absDone===true?s.abs:(s.absDone===false?"Skipped":""),
-      s.checkin&&s.checkin.notes?s.checkin.notes:""])]);
+      [s.note,s.checkin&&s.checkin.notes].filter(Boolean).join(" · ")])]);
   files["exercise_log.csv"]=toCsv([["date","phase","session_label","exercise","set_number","reps","load","unit","per_side","notes"],
     ...S.sessions.flatMap(s=>s.entries.flatMap(e=>e.sets.map((st,i)=>[s.date,ph,s.name,e.name,i+1,st.r,st.w,e.unit,e.perSide?"yes":"",""])))]);
   files["checkin_log.csv"]=toCsv([["date","session_label","sleep_hours","sleep_quality_1to5","energy_1to5","notes"],
     ...S.sessions.filter(s=>s.checkin).map(s=>[s.date,s.name,s.checkin.sleepH,s.checkin.sleepQ||"",s.checkin.energy||"",s.checkin.notes||""])]);
-  files["nutrition_log.csv"]=toCsv([["date","protein_target","calories_on_plan"],
-    ...[...S.nutrition].filter(n=>n.protein||n.calories).sort((a,b)=>a.date.localeCompare(b.date)).map(n=>[n.date,n.protein,n.calories])]);
+  files["nutrition_log.csv"]=toCsv([["date","protein_target","calories_on_plan","sleep_hours","note"],
+    ...[...S.nutrition].filter(n=>n.protein||n.calories||n.sleepH!=null||n.note).sort((a,b)=>a.date.localeCompare(b.date)).map(n=>[n.date,n.protein||"",n.calories||"",n.sleepH!=null?n.sleepH:"",n.note||""])]);
   return files;
 }
 function parseCSV(text){
@@ -764,10 +862,12 @@ window.copyCsv=function(name){
 window.shareAll=function(){
   const files=buildCSVs();
   const txt=Object.entries(files).map(([n,c])=>"===== "+n+" =====\n"+c).join("\n\n");
+  S.settings.lastBackup=today(); save();
   if(navigator.share)navigator.share({title:"Physique logs "+today(),text:txt}).catch(()=>{});
   else navigator.clipboard.writeText(txt).then(()=>toast("Copied all"));
 };
 window.backupAll=function(){
+  S.settings.lastBackup=today(); save();
   navigator.clipboard.writeText(JSON.stringify(S)).then(()=>toast("Full backup copied — save it in Notes"));
 };
 window.restoreBackup=function(){
@@ -817,6 +917,13 @@ function viewData(){
   <h2>Templates</h2>
   ${SESSION_KEYS.map(k=>`<button class="btn" style="margin-bottom:6px;text-align:left" onclick="editKey='${k}';render()">${esc(S.templates[k].name)} <span class="muted small">· ${S.templates[k].exercises.length} exercises</span></button>`).join("")}
   ${editor}
+  <h2>Cardio settings</h2>
+  <div class="card">
+    <div class="q"><label>Cardio mode label</label><input type="text" value="${esc(S.settings.cardioLabel)}" onchange="S.settings.cardioLabel=this.value;save();toast('Saved')"></div>
+    <div class="q" style="margin-bottom:0"><label>Estimated kcal per minute</label>
+      <div class="stepper" style="max-width:220px"><button onclick="S.settings.cardioKcalMin=Math.max(1,S.settings.cardioKcalMin-0.5);save();render()">−</button><div class="val num grow">${S.settings.cardioKcalMin}</div><button onclick="S.settings.cardioKcalMin+=0.5;save();render()">+</button></div>
+      <div class="tiny muted" style="margin-top:6px">~8 kcal/min ≈ incline walk, 13% incline, speed 3, ~67 kg body weight. Rough estimate only.</div></div>
+  </div>
   <h2>Backup</h2>
   <div class="row"><button class="btn btn-ghost grow" onclick="backupAll()">Copy full backup</button>
   <button class="btn btn-ghost grow" onclick="restoreBackup()">Restore</button></div>
