@@ -280,7 +280,9 @@ function strengthIndex(){
     if(first[e.name]==null){ first[e.name]={w,date:s.date}; }
     last[e.name]={w,date:s.date};
   }));
-  const ratios=Object.keys(first).filter(k=>last[k].date>first[k].date&&first[k].w>0).map(k=>last[k].w/first[k].w);
+  // trimmed mean: ratios outside 0.5-2.0 are machine/unit artifacts, not strength changes
+  const ratios=Object.keys(first).filter(k=>last[k].date>first[k].date&&first[k].w>0)
+    .map(k=>last[k].w/first[k].w).filter(r=>r>=0.5&&r<=2);
   if(!ratios.length) return null;
   return (ratios.reduce((a,b)=>a+b,0)/ratios.length-1)*100;
 }
@@ -563,16 +565,20 @@ function generateReview(){
   // progression events
   const prog=[];
   const seen={};
+  // compare in kg so a kg->lb unit change never reads as a load jump; require same unit for the display
   sess.forEach(s=>s.entries.forEach(e=>{
     const k=s.sessionKey+"|"+e.name, w=e.sets[0]?e.sets[0].w:null;
     if(w==null)return;
-    if(seen[k]!=null&&w>seen[k]) prog.push(`${s.date}: ${e.name} ${fmtNum(seen[k])} -> ${fmtNum(w)} ${e.unit}`);
-    if(seen[k]==null){
+    const kg=toKg(w,e.unit);
+    if(seen[k]&&e.unit===seen[k].unit&&kg>seen[k].kg)
+      prog.push(`${s.date}: ${e.name} ${fmtNum(seen[k].w)} -> ${fmtNum(w)} ${e.unit}`);
+    if(!seen[k]){
       const before=[...S.sessions].filter(x=>x.sessionKey===s.sessionKey&&x.date<=from).pop();
       const pe=before?before.entries.find(x=>x.name===e.name):null;
-      if(pe&&pe.sets[0]&&w>pe.sets[0].w) prog.push(`${s.date}: ${e.name} ${fmtNum(pe.sets[0].w)} -> ${fmtNum(w)} ${e.unit}`);
+      if(pe&&pe.sets[0]&&pe.unit===e.unit&&kg>toKg(pe.sets[0].w,pe.unit))
+        prog.push(`${s.date}: ${e.name} ${fmtNum(pe.sets[0].w)} -> ${fmtNum(w)} ${e.unit}`);
     }
-    seen[k]=w;
+    seen[k]={kg,w,unit:e.unit};
   }));
   const dailySleep=S.nutrition.filter(x=>inWin(x)&&x.sleepH!=null).map(x=>x.sleepH);
   const sleepA=avg(dailySleep.length?dailySleep:sess.map(s=>s.checkin&&s.checkin.sleepH).filter(v=>v!=null));
@@ -832,13 +838,17 @@ function importText(text){
           cardio:car,cardioDone:car&&!/skip/i.test(car)?true:(car?false:null),
           abs:abs,absDone:abs&&!/skip/i.test(abs)?true:(abs?false:null),checkin:null});
         counts.sessions++; });
-    } else if(h.includes("sleep_hours")){
+    } else if(h.includes("sleep_hours")&&!h.includes("protein_target")){
       rows.slice(1).forEach(r=>{ const d=r[idx("date")],lbl=idx("session_label")>=0?r[idx("session_label")]:"";
         const s=S.sessions.find(x=>x.date===d&&(!lbl||x.name===lbl));
         if(s&&!s.checkin){ s.checkin={sleepH:parseFloat(r[idx("sleep_hours")])||null,sleepQ:parseInt(r[idx("sleep_quality_1to5")])||0,energy:parseInt(r[idx("energy_1to5")])||0,notes:idx("notes")>=0?r[idx("notes")]:""}; counts.checkins++; } });
     } else if(h.includes("protein_target")){
       rows.slice(1).forEach(r=>{ const d=r[idx("date")]; if(!d)return;
-        if(!S.nutrition.some(n=>n.date===d)){ S.nutrition.push({date:d,protein:r[idx("protein_target")],calories:r[idx("calories_on_plan")]}); counts.nutrition++; } });
+        if(!S.nutrition.some(n=>n.date===d)){
+          const rec={date:d,protein:r[idx("protein_target")],calories:r[idx("calories_on_plan")]};
+          if(idx("sleep_hours")>=0&&r[idx("sleep_hours")]!=="")rec.sleepH=parseFloat(r[idx("sleep_hours")]);
+          if(idx("note")>=0&&r[idx("note")])rec.note=r[idx("note")];
+          S.nutrition.push(rec); counts.nutrition++; } });
     }
   });
   S.sessions.sort((a,b)=>a.date.localeCompare(b.date));
