@@ -218,7 +218,7 @@ function streak(){
 }
 
 /* ================= views ================= */
-let tab="home", active=null, qa=null, editKey=null, reviewText="", planMsg="";
+let tab="home", active=null, qa=null, editKey=null, reviewText="", planMsg="", logDate=today(), dayPick=null;
 const DRAFT="physique_v2_draft";
 function persistDraft(){ try{ if(active) localStorage.setItem(DRAFT,JSON.stringify({active,qa,timerEnd:Timer.end>Date.now()?Timer.end:0})); else localStorage.removeItem(DRAFT); }catch(e){} }
 function restoreDraft(){ try{
@@ -238,7 +238,9 @@ function render(){
   else v.innerHTML=viewData();
   window.scrollTo(0,0);
 }
-document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{ tab=b.dataset.tab; render(); });
+document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{ tab=b.dataset.tab; logDate=today(); dayPick=null; render(); });
+window.pickDay=function(iso){ dayPick=iso; render(); };
+window.chooseLog=function(kind){ logDate=dayPick; dayPick=null; tab=kind; render(); };
 
 /* ---------- HOME ---------- */
 function spark(data,w,h){
@@ -260,7 +262,7 @@ function calendarHTML(){
     const future=iso>t;
     const st=future?"future":dayState(iso);
     const trained=sessionsOn(iso).length>0;
-    cells+=`<div class="day ${st}${iso===t?" today":""}">${d}${trained?'<div class="dot"></div>':""}</div>`;
+    cells+=`<div class="day ${st}${iso===t?" today":""}" ${future?"":`onclick="pickDay('${iso}')" style="cursor:pointer"`}>${d}${trained?'<div class="dot"></div>':""}</div>`;
   }
   return `<div class="cal">${wd}${cells}</div>
   <div class="row tiny muted" style="margin-top:10px;gap:14px;flex-wrap:wrap">
@@ -341,8 +343,18 @@ function viewHome(){
     <div class="stat"><div class="k">Sessions · 7d</div><div class="v num">${sess7}</div><div class="d flat">of 6 planned</div></div>
     <div class="stat"><div class="k">Nutrition green · 7d</div><div class="v num">${greens7}<span class="small muted">/${nDays7||0}</span></div><div class="d flat">both targets hit</div></div>
   </div>
-  <h2>This month</h2>
+  <h2>This month · tap a day to log</h2>
   <div class="card">${calendarHTML()}</div>
+  ${dayPick?`<div style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:flex-end;justify-content:center" onclick="dayPick=null;render()">
+    <div class="card" style="width:100%;max-width:520px;margin:0;border-radius:20px 20px 0 0;padding-bottom:calc(24px + env(safe-area-inset-bottom))" onclick="event.stopPropagation()">
+      <b style="text-transform:uppercase;letter-spacing:.06em">${esc(dayPick)}</b>
+      <div style="height:12px"></div>
+      <button class="btn btn-volt" onclick="chooseLog('train')">Train log</button>
+      <div style="height:8px"></div>
+      <button class="btn" onclick="chooseLog('log')">Daily log</button>
+      <div style="height:8px"></div>
+      <button class="btn btn-ghost" onclick="dayPick=null;render()">Cancel</button>
+    </div></div>`:""}
   <h2>Body trend</h2>
   <div class="statgrid">
     <div class="stat"><div class="k">Weight</div><div class="v num">${latest&&latest.weight!=null?latest.weight.toFixed(1):"—"}<span class="small muted"> kg</span></div>
@@ -393,16 +405,20 @@ function suggestion(ex,last){
 }
 function lastDateOf(key){ for(let i=S.sessions.length-1;i>=0;i--) if(S.sessions[i].sessionKey===key) return S.sessions[i].date; return null; }
 function viewTrain(){
-  const cards=SESSION_KEYS.map(k=>{ const t=S.templates[k], last=lastDateOf(k);
-    return `<button class="sessbtn" onclick="startSession('${k}')"><b>${esc(t.name)}</b><span>${t.exercises.length?t.exercises.length+" exercises · last "+(last||"never"):"empty — set up plan"}</span></button>`; }).join("");
-  return `<h1>Train</h1><div class="sessgrid">${cards}</div>
+  const lastTrain=[...S.sessions].filter(s=>s.sessionKey!=="rest").pop();
+  const nextKey=lastTrain&&SESSION_KEYS.includes(lastTrain.sessionKey)?SESSION_KEYS[(SESSION_KEYS.indexOf(lastTrain.sessionKey)+1)%6]:SESSION_KEYS[0];
+  const cards=SESSION_KEYS.map(k=>{ const t=S.templates[k], last=lastDateOf(k), ls=lastSessionOf(k);
+    const lifts=ls?ls.entries.slice(0,2).map(e=>`${e.name.split(" ").slice(0,2).join(" ")} ${fmtNum(e.sets[0].w)}`).join(" · "):"";
+    return `<button class="sessbtn" ${k===nextKey?'style="border-color:var(--volt)"':""} onclick="startSession('${k}')"><b>${esc(t.name)}${k===nextKey?' <span style="color:var(--volt)">›</span>':""}</b><span>${t.exercises.length?("last "+(last||"never")+(lifts?" · "+esc(lifts):"")):"empty — set up plan"}</span></button>`; }).join("");
+  const banner=lastTrain?`<div class="card row"><div class="grow small"><span class="muted">Last: </span><b>${esc(lastTrain.name)}</b> <span class="muted">· ${esc(lastTrain.date)}</span><br><span class="muted">Up next: </span><b style="color:var(--volt)">${esc(SESSION_NAMES[nextKey])}</b></div></div>`:"";
+  return `<h1>Train${logDate!==today()?` <span class="chip warn">for ${esc(logDate)}</span>`:""}</h1>${banner}<div class="sessgrid">${cards}</div>
   <div style="height:10px"></div>
   <button class="btn btn-ghost" onclick="logRestDay()">Log today as Rest Day</button>
   <h2>Rest timer</h2><div class="card"><div class="scale">${[90,120,150,180].map(s=>`<button class="${S.settings.restSec===s?"on":""}" onclick="setRest(${s})">${s}s</button>`).join("")}</div></div>`;
 }
 window.setRest=s=>{ S.settings.restSec=s; save(); render(); };
 window.logRestDay=function(){
-  const t=today();
+  const t=logDate;
   if(S.sessions.some(s=>s.date===t)){ if(!confirm("Something is already logged today. Add a Rest Day anyway?")) return; }
   S.sessions.push({id:String(Date.now()),date:t,sessionKey:"rest",name:"Rest Day",entries:[],cardio:"",cardioDone:null,cardioMin:0,abs:"",absDone:null,checkin:null,note:""});
   save(); toast("Rest day logged"); tab="home"; render();
@@ -410,7 +426,7 @@ window.logRestDay=function(){
 window.startSession=function(key){
   const t=S.templates[key];
   if(!t.exercises.length){ toast("Template empty — import your plan first",true); return; }
-  active={ id:String(Date.now()), date:today(), sessionKey:key, name:t.name,
+  active={ id:String(Date.now()), date:logDate, sessionKey:key, name:t.name,
     entries:t.exercises.map(ex=>{ const last=lastEntryFor(key,ex.name);
       return { name:ex.name, unit:ex.unit, perSide:!!ex.perSide,
         sets:Array.from({length:ex.sets},(_,i)=>({ w:last?last.sets[0].w:ex.load, r:(last&&last.sets[i]?last.sets[i].r:ex.repLow), done:false })) }; }),
@@ -432,7 +448,7 @@ function viewSession(){
       <div class="suggest ${sug.cls}">${esc(sug.text)}</div>${rows}
       <button class="btn btn-ghost btn-sm" style="margin-top:10px;width:100%" onclick="allDone(${ei})">✓ All sets as shown</button></div>`;
   }).join("");
-  return `<h1>${esc(active.name)} <span class="thin small">${esc(active.date)}</span></h1>${exCards}
+  return `<h1 class="row">${esc(active.name)} <input type="date" max="${today()}" style="width:150px;font-weight:700" value="${esc(active.date)}" onchange="active.date=this.value||today();persistDraft()"></h1>${exCards}
   <h2>Abs</h2><div class="card"><div class="small muted" style="margin-bottom:10px">${esc(active.abs||"—")}</div>
     <div class="scale"><button class="${active.absDone===true?"on":""}" onclick="active.absDone=true;render()">Done</button>
     <button class="${active.absDone===false?"on neg":""}" onclick="active.absDone=false;render()">Skipped</button></div></div>
@@ -491,27 +507,23 @@ function tri(field,val,labels,vals){
   const cls=["","mid","neg"];
   return `<div class="scale">`+vals.map((v,i)=>`<button class="${(nutritionToday()[field]===v)?("on "+cls[i]):""}" onclick="setNutri('${field}','${v}')">${labels[i]}</button>`).join("")+`</div>`;
 }
-function nutritionToday(){ let n=nutritionFor(today()); if(!n){n={date:today(),protein:"",calories:""}; } return n; }
+function nutritionToday(){ let n=nutritionFor(logDate); if(!n){n={date:logDate,protein:"",calories:""}; } return n; }
+function nutriRec(){ let n=nutritionFor(logDate); if(!n){ n={date:logDate,protein:"",calories:""}; S.nutrition.push(n); } return n; }
 window.setNutri=function(f,v){
-  let n=nutritionFor(today());
-  if(!n){ n={date:today(),protein:"",calories:""}; S.nutrition.push(n); }
+  const n=nutriRec();
   n[f]=n[f]===v?"":v; save(); render();
   if(n.protein&&n.calories) toast("Nutrition logged");
 };
 window.sleepBump=function(d){
-  let n=nutritionFor(today());
-  if(!n){ n={date:today(),protein:"",calories:""}; S.nutrition.push(n); }
+  const n=nutriRec();
   n.sleepH=Math.max(0,Math.min(14,(n.sleepH==null?7:n.sleepH)+d)); save(); render();
 };
-window.saveDayNote=function(v){
-  let n=nutritionFor(today());
-  if(!n){ n={date:today(),protein:"",calories:""}; S.nutrition.push(n); }
-  n.note=v; save(); toast("Note saved");
-};
+window.saveDayNote=function(v){ nutriRec().note=v; save(); toast("Note saved"); };
 function viewLog(){
-  const t=today();
+  const t=logDate;
   const ex=S.body.find(b=>b.date===t);
-  return `<h1>Log <span class="thin small">${esc(t)}</span></h1>
+  return `<h1 class="row">Log <input type="date" max="${today()}" style="width:160px;font-weight:700" value="${esc(t)}" onchange="logDate=this.value||today();render()"></h1>
+  ${t!==today()?`<div class="chip warn" style="margin-bottom:10px">Logging for ${esc(t)} — not today</div>`:""}
   <h2>Nutrition · 5 seconds</h2>
   <div class="card">
     <div class="q"><label>Protein target reached? <span class="muted">(${esc(S.settings.proteinTarget)})</span></label>
@@ -548,13 +560,13 @@ function viewLog(){
   </table></div>`;
 }
 const numOrNull=id=>{ const v=document.getElementById(id).value.trim(); return v===""?null:parseFloat(v); };
-window.saveBody=function(){ const t=today();
+window.saveBody=function(){ const t=logDate;
   const w=numOrNull("inW"), g=numOrNull("inG");
   if(w==null&&g==null){ toast("Nothing to save",true); return; }
   const i=S.body.findIndex(b=>b.date===t);
   const rec={date:t,weight:w,waist:g};
   if(i>=0)S.body[i]=rec; else S.body.push(rec); save(); toast("Body saved"); render(); };
-window.saveScan=function(){ const t=today();
+window.saveScan=function(){ const t=logDate;
   const w=numOrNull("inSW"), m=numOrNull("inSM"), f=numOrNull("inSF");
   if(w==null||m==null||f==null){ toast("Fill all 3 scan numbers",true); return; }
   S.scans=S.scans.filter(s=>s.date!==t);
