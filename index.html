@@ -219,11 +219,20 @@ function streak(){
 
 /* ================= views ================= */
 let tab="home", active=null, qa=null, editKey=null, reviewText="", planMsg="";
+const DRAFT="physique_v2_draft";
+function persistDraft(){ try{ if(active) localStorage.setItem(DRAFT,JSON.stringify({active,qa,timerEnd:Timer.end>Date.now()?Timer.end:0})); else localStorage.removeItem(DRAFT); }catch(e){} }
+function restoreDraft(){ try{
+  const d=JSON.parse(localStorage.getItem(DRAFT));
+  if(d&&d.active&&d.active.date===today()){ active=d.active; qa=d.qa||null; tab="train";
+    if(d.timerEnd>Date.now()) Timer.start(Math.ceil((d.timerEnd-Date.now())/1000)); }
+  else localStorage.removeItem(DRAFT);
+}catch(e){} }
 function render(){
+  persistDraft();
   document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===tab));
   const v=document.getElementById("view");
   if(tab==="home") v.innerHTML=viewHome();
-  else if(tab==="train") v.innerHTML=active?viewSession():viewTrain();
+  else if(tab==="train") v.innerHTML=active?(qa?viewCheckin():viewSession()):viewTrain();
   else if(tab==="log") v.innerHTML=viewLog();
   else if(tab==="review") v.innerHTML=viewReview();
   else v.innerHTML=viewData();
@@ -434,7 +443,7 @@ function viewSession(){
       <div class="stepper" style="max-width:220px"><button onclick="cardioBump(-5)">−</button><div class="val num grow">${active.cardioMin}</div><button onclick="cardioBump(5)">+</button></div></div>`:""}
   </div>
   <h2>Session note · optional</h2>
-  <div class="card"><textarea id="sessNote" rows="2" placeholder="anything unusual — machine busy, pain, gym change…" onchange="active.note=this.value">${esc(active.note||"")}</textarea></div>
+  <div class="card"><textarea id="sessNote" rows="2" placeholder="anything unusual — machine busy, pain, gym change…" onchange="active.note=this.value;persistDraft()">${esc(active.note||"")}</textarea></div>
   <div style="margin:18px 0 10px"><button class="btn btn-volt" style="padding:17px" onclick="finishSession()">Finish session</button></div>
   <button class="btn btn-ghost" onclick="cancelSession()">Discard</button>`;
 }
@@ -451,6 +460,7 @@ window.cancelSession=function(){ if(confirm("Discard this session?")){ active=nu
 window.finishSession=function(){
   const n=document.getElementById("sessNote"); if(n)active.note=n.value;
   qa={sleepQ:0,energy:0,notes:""};
+  persistDraft();
   document.getElementById("view").innerHTML=viewCheckin(); window.scrollTo(0,0);
 };
 function scaleBtns(f,n){ let h='<div class="scale">'; for(let i=1;i<=n;i++) h+=`<button class="${qa[f]===i?"on":""}" onclick="qset('${f}',${i})">${i}</button>`; return h+"</div>"; }
@@ -461,9 +471,9 @@ function viewCheckin(){
     <div class="q"><label>Notes · soreness, form</label><textarea id="qnotes" rows="2" placeholder="optional">${esc(qa.notes)}</textarea></div>
   </div>
   <button class="btn btn-volt" style="padding:17px" onclick="saveSession()">Save session</button>
-  <div style="height:10px"></div><button class="btn btn-ghost" onclick="render()">← Back</button>`;
+  <div style="height:10px"></div><button class="btn btn-ghost" onclick="qa=null;render()">← Back</button>`;
 }
-window.qset=function(f,v){ qa[f]=v; const n=document.getElementById("qnotes"); if(n)qa.notes=n.value; document.getElementById("view").innerHTML=viewCheckin(); };
+window.qset=function(f,v){ qa[f]=v; const n=document.getElementById("qnotes"); if(n)qa.notes=n.value; persistDraft(); document.getElementById("view").innerHTML=viewCheckin(); };
 window.saveSession=function(){
   const n=document.getElementById("qnotes"); if(n)qa.notes=n.value;
   active.checkin=qa;
@@ -957,7 +967,7 @@ window.tplDel=function(i){ S.templates[editKey].exercises.splice(i,1); save(); r
 window.tplAdd=function(){ S.templates[editKey].exercises.push({name:"New Exercise",sets:3,repLow:10,repHigh:12,load:10,unit:"kg",perSide:false,hold:false,inc:2.5}); save(); render(); };
 
 /* ================= boot ================= */
-load(); render();
+load(); restoreDraft(); render();
 if("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(()=>{});
 </script>
 </body>
