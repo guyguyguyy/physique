@@ -155,7 +155,7 @@ td.num,th.num{text-align:right}
 <script>
 "use strict";
 /* ================= storage ================= */
-const KEY="physique_v2";
+const KEY="physique_v2"; const APP_VER="2.6";
 const SESSION_KEYS=["pushHyp","pullHyp","legsHyp","pushHeavy","pullHeavy","legHeavy"];
 const SESSION_NAMES={pushHyp:"Push Hypertrophy",pullHyp:"Pull Hypertrophy",legsHyp:"Legs Hypertrophy",pushHeavy:"Push Heavy",pullHeavy:"Pull Heavy",legHeavy:"Leg Heavy"};
 let S;
@@ -218,17 +218,18 @@ function streak(){
 }
 
 /* ================= views ================= */
-let tab="home", active=null, qa=null, editKey=null, reviewText="", planMsg="", logDate=today(), dayPick=null;
+let tab="home", active=null, qa=null, editKey=null, editId=null, reviewText="", planMsg="", logDate=today(), dayPick=null, chart=null, chartRange=90, lastViewKey="";
 const DRAFT="physique_v2_draft";
-function persistDraft(){ try{ if(active) localStorage.setItem(DRAFT,JSON.stringify({active,qa,timerEnd:Timer.end>Date.now()?Timer.end:0})); else localStorage.removeItem(DRAFT); }catch(e){} }
+function persistDraft(){ try{ if(active) localStorage.setItem(DRAFT,JSON.stringify({active,qa,editId,ts:Date.now(),timerEnd:Timer.end>Date.now()?Timer.end:0})); else localStorage.removeItem(DRAFT); }catch(e){} }
 function restoreDraft(){ try{
   const d=JSON.parse(localStorage.getItem(DRAFT));
-  if(d&&d.active&&d.active.date===today()){ active=d.active; qa=d.qa||null; tab="train";
+  if(d&&d.active&&Date.now()-(d.ts||0)<43200000){ active=d.active; qa=d.qa||null; editId=d.editId||null; tab="train";
     if(d.timerEnd>Date.now()) Timer.start(Math.ceil((d.timerEnd-Date.now())/1000)); }
   else localStorage.removeItem(DRAFT);
 }catch(e){} }
 function render(){
   persistDraft();
+  const y=window.scrollY;
   document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===tab));
   const v=document.getElementById("view");
   if(tab==="home") v.innerHTML=viewHome();
@@ -236,10 +237,16 @@ function render(){
   else if(tab==="log") v.innerHTML=viewLog();
   else if(tab==="review") v.innerHTML=viewReview();
   else v.innerHTML=viewData();
-  window.scrollTo(0,0);
+  const key=tab+"|"+(active?active.id:"")+"|"+(qa?"q":"")+"|"+(chart||"")+"|"+(dayPick||"");
+  if(key===lastViewKey) window.scrollTo(0,y); else window.scrollTo(0,0);
+  lastViewKey=key;
 }
 document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{ tab=b.dataset.tab; logDate=today(); dayPick=null; render(); });
 window.pickDay=function(iso){ dayPick=iso; render(); };
+window.editSession=function(id){ const x=S.sessions.find(v=>v.id===id); if(!x)return;
+  active=JSON.parse(JSON.stringify(x)); active.entries.forEach(e=>e.sets.forEach(st=>st.done=true));
+  if(active.cardioMin==null)active.cardioMin=20; if(active.note==null)active.note="";
+  editId=id; qa=null; dayPick=null; tab="train"; render(); };
 window.chooseLog=function(kind){ logDate=dayPick; dayPick=null; tab=kind; render(); };
 
 /* ---------- HOME ---------- */
@@ -348,8 +355,11 @@ function viewHome(){
   ${dayPick?`<div style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:flex-end;justify-content:center" onclick="dayPick=null;render()">
     <div class="card" style="width:100%;max-width:520px;margin:0;border-radius:20px 20px 0 0;padding-bottom:calc(24px + env(safe-area-inset-bottom))" onclick="event.stopPropagation()">
       <b style="text-transform:uppercase;letter-spacing:.06em">${esc(dayPick)}</b>
+      ${(()=>{const n=nutritionFor(dayPick);const b=S.body.find(x=>x.date===dayPick);
+        return `<div class="tiny muted" style="margin-top:4px">${n&&(n.protein||n.calories)?"food "+(n.protein||"?")+"/"+(n.calories||"?"):"no daily log"}${b?" · "+(b.weight!=null?b.weight+" kg":"")+(b.waist!=null?" "+b.waist+" cm":""):""}</div>`;})()}
       <div style="height:12px"></div>
-      <button class="btn btn-volt" onclick="chooseLog('train')">Train log</button>
+      ${sessionsOn(dayPick).map(x=>`<button class="btn" style="margin-bottom:8px" onclick="editSession('${x.id}')">Edit · ${esc(x.name)}</button>`).join("")}
+      <button class="btn btn-volt" onclick="chooseLog('train')">Add train log</button>
       <div style="height:8px"></div>
       <button class="btn" onclick="chooseLog('log')">Daily log</button>
       <div style="height:8px"></div>
@@ -357,19 +367,19 @@ function viewHome(){
     </div></div>`:""}
   <h2>Body trend</h2>
   <div class="statgrid">
-    <div class="stat"><div class="k">Weight</div><div class="v num">${latest&&latest.weight!=null?latest.weight.toFixed(1):"—"}<span class="small muted"> kg</span></div>
+    <div class="stat" onclick="openChart('weight')" style="cursor:pointer"><div class="k">Weight</div><div class="v num">${latest&&latest.weight!=null?latest.weight.toFixed(1):"—"}<span class="small muted"> kg</span></div>
       <div class="d ${dW==null?"flat":dW>0.05?"up":dW<-0.05?"down":"flat"}">${w7?("7-avg "+w7.toFixed(1)+(dW!=null?" ("+(dW>0?"+":"")+dW.toFixed(1)+")":"")):"no data"}</div>
       ${spark(bodySorted.slice(-21).map(b=>b.weight).filter(v=>v!=null),150,44)}</div>
-    <div class="stat"><div class="k">Waist</div><div class="v num">${latest&&latest.waist?latest.waist.toFixed(1):"—"}<span class="small muted"> cm</span></div>
+    <div class="stat" onclick="openChart('waist')" style="cursor:pointer"><div class="k">Waist</div><div class="v num">${latest&&latest.waist?latest.waist.toFixed(1):"—"}<span class="small muted"> cm</span></div>
       <div class="d flat">${g7?("7-avg "+g7.toFixed(1)):"no data"}</div>
       ${spark(bodySorted.slice(-21).map(b=>b.waist).filter(v=>v!=null),150,44)}</div>
   </div>
   <h2>Body composition · Accuniq</h2>
   <div class="statgrid">
-    <div class="stat"><div class="k">Body fat</div><div class="v num">${scan?scan.fat.toFixed(1):"—"}<span class="small muted"> %</span></div>
+    <div class="stat" onclick="openChart('fat')" style="cursor:pointer"><div class="k">Body fat</div><div class="v num">${scan?scan.fat.toFixed(1):"—"}<span class="small muted"> %</span></div>
       <div class="d flat">${scansSorted.length>1?("prev "+scansSorted[scansSorted.length-2].fat.toFixed(1)+"% ("+scansSorted[scansSorted.length-2].date.slice(5)+")"):"one scan"}</div>
       ${spark(scansSorted.slice(-12).map(s=>s.fat),150,44)}</div>
-    <div class="stat"><div class="k">Muscle</div><div class="v num">${scan?scan.muscle.toFixed(1):"—"}<span class="small muted"> kg</span></div>
+    <div class="stat" onclick="openChart('muscle')" style="cursor:pointer"><div class="k">Muscle</div><div class="v num">${scan?scan.muscle.toFixed(1):"—"}<span class="small muted"> kg</span></div>
       <div class="d flat">${scan?("scan "+scan.date.slice(5)):"no scans"}</div>
       ${spark(scansSorted.slice(-12).map(s=>s.muscle),150,44)}</div>
   </div>
@@ -388,6 +398,7 @@ function viewHome(){
   ${needBackup?`<div class="card" style="border-color:var(--amber)"><b style="color:var(--amber)">Back up your data.</b>
     <div class="small muted" style="margin:4px 0 10px">${backupAge==null?"No backup yet":backupAge+" days since last backup"}. Data lives only on this phone.</div>
     <button class="btn btn-sm" onclick="tab='data';render()">Go to Data → backup / export</button></div>`:""}
+  ${chart?chartOverlay():""}
   `;
 }
 
@@ -472,10 +483,10 @@ window.bump=function(ei,si,f,dir){
 window.toggleSet=function(ei,si){ const st=active.entries[ei].sets[si]; st.done=!st.done; if(st.done)Timer.start(S.settings.restSec); render(); };
 window.allDone=function(ei){ active.entries[ei].sets.forEach(s=>s.done=true); Timer.start(S.settings.restSec); render(); };
 window.cardioBump=function(d){ const n=document.getElementById("sessNote"); if(n)active.note=n.value; active.cardioMin=Math.max(0,active.cardioMin+d); render(); };
-window.cancelSession=function(){ if(confirm("Discard this session?")){ active=null; Timer.stop(); render(); } };
+window.cancelSession=function(){ if(confirm(editId?"Discard changes? The original stays saved.":"Discard this session?")){ active=null; qa=null; editId=null; Timer.stop(); render(); } };
 window.finishSession=function(){
   const n=document.getElementById("sessNote"); if(n)active.note=n.value;
-  qa={sleepQ:0,energy:0,notes:""};
+  qa=active.checkin?Object.assign({sleepQ:0,energy:0,notes:""},active.checkin):{sleepQ:0,energy:0,notes:""};
   persistDraft();
   document.getElementById("view").innerHTML=viewCheckin(); window.scrollTo(0,0);
 };
@@ -495,10 +506,12 @@ window.saveSession=function(){
   active.checkin=qa;
   active.entries=active.entries.map(e=>({name:e.name,unit:e.unit,perSide:e.perSide,
     sets:(e.sets.some(s=>s.done)?e.sets.filter(s=>s.done):e.sets).map(s=>({w:s.w,r:s.r}))}));
-  S.sessions.push(active);
+  if(editId){ const i=S.sessions.findIndex(x=>x.id===editId); if(i>=0)S.sessions[i]=active; else S.sessions.push(active); }
+  else S.sessions.push(active);
+  S.sessions.sort((a,b)=>a.date.localeCompare(b.date));
   const tpl=S.templates[active.sessionKey];
-  active.entries.forEach(en=>{ const ex=tpl.exercises.find(e=>e.name===en.name); if(ex&&en.sets.length)ex.load=en.sets[0].w; });
-  save(); active=null; qa=null; Timer.stop(); toast("Session saved"); tab="home"; render();
+  if(tpl) active.entries.forEach(en=>{ const ex=tpl.exercises.find(e=>e.name===en.name); if(ex&&en.sets.length)ex.load=en.sets[0].w; });
+  save(); active=null; qa=null; editId=null; Timer.stop(); toast("Session saved"); tab="home"; render();
 };
 
 /* ---------- LOG ---------- */
@@ -552,6 +565,8 @@ function viewLog(){
   :`<button class="btn btn-ghost" onclick="scanOpen=true;render()">+ Add scan result</button>`}
   <h2>Day note · optional</h2>
   <div class="card"><textarea rows="2" placeholder="anything worth remembering — big dinner out, sick, travel…" onchange="saveDayNote(this.value)">${esc((nutritionFor(t)||{}).note||"")}</textarea></div>
+  <div class="row" style="margin-top:16px"><button class="btn btn-volt grow" onclick="toast('Day saved — everything auto-saves as you tap')">Save day ✓</button>
+  <button class="btn grow" onclick="copyDay()">Copy for ChatGPT</button></div>
   <h2>Recent</h2>
   <div class="card"><table><tr><th>Date</th><th class="num">kg</th><th class="num">cm</th><th>Food</th></tr>
   ${Array.from({length:7},(_,i)=>{ const d=addDays(t,-i); const b=S.body.find(x=>x.date===d); const n=nutritionFor(d);
@@ -780,6 +795,65 @@ function viewReview(){
   ${S.plans.length?[...S.plans].reverse().map(p=>`<div class="card row"><div class="grow"><b>${esc(p.phase)}</b><div class="tiny muted">applied ${esc(p.date)}</div></div></div>`).join(""):'<div class="card small muted">No plans applied yet.</div>'}`;
 }
 
+window.copyDay=function(){
+  const d=logDate, n=nutritionFor(d)||{}, b=S.body.find(x=>x.date===d), sc=S.scans.find(x=>x.date===d);
+  const L=["MY DAY — "+d+" ("+S.settings.phase+")"];
+  const ss=sessionsOn(d);
+  ss.forEach(x=>{ L.push("Workout: "+x.name);
+    x.entries.forEach(e=>L.push("- "+e.name+": "+e.sets.map(t=>fmtNum(t.w)+"x"+t.r).join(", ")+" "+e.unit+(e.perSide?"/side":"")));
+    if(x.cardioDone===true)L.push("- Cardio: "+(x.cardioMin?S.settings.cardioLabel+" "+x.cardioMin+" min":x.cardio));
+    if(x.absDone===true)L.push("- Abs: "+x.abs);
+    if(x.checkin)L.push("- Check-in: sleep quality "+(x.checkin.sleepQ||"?")+"/5 · energy "+(x.checkin.energy||"?")+"/5"+(x.checkin.notes?" · "+x.checkin.notes:""));
+    if(x.note)L.push("- Note: "+x.note); });
+  if(!ss.length)L.push("No workout logged.");
+  L.push("Nutrition: protein "+(n.protein||"?")+" · calories "+(n.calories||"?")+(n.sleepH!=null?" · sleep "+n.sleepH+" h":""));
+  if(b)L.push("Body: "+(b.weight!=null?b.weight+" kg":"")+(b.waist!=null?" · waist "+b.waist+" cm":""));
+  if(sc)L.push("Scan: "+sc.fat+"% fat · "+sc.muscle+" kg muscle · "+sc.weight+" kg");
+  if(n.note)L.push("Day note: "+n.note);
+  L.push("Targets: "+S.settings.calT+" train / "+S.settings.calR+" rest · protein "+S.settings.proteinTarget);
+  const txt=L.join("\n");
+  if(navigator.share)navigator.share({text:txt}).catch(()=>{});
+  else navigator.clipboard.writeText(txt).then(()=>toast("Copied"));
+};
+function chartSeries(m){
+  const body=[...S.body].sort((a,b)=>a.date.localeCompare(b.date));
+  const scans=[...S.scans].sort((a,b)=>a.date.localeCompare(b.date));
+  if(m==="weight")return{label:"Weight kg",pts:body.filter(b=>b.weight!=null).map(b=>({d:b.date,v:b.weight}))};
+  if(m==="waist")return{label:"Waist cm",pts:body.filter(b=>b.waist!=null).map(b=>({d:b.date,v:b.waist}))};
+  if(m==="fat")return{label:"Body fat %",pts:scans.map(x=>({d:x.date,v:x.fat}))};
+  return{label:"Muscle kg",pts:scans.map(x=>({d:x.date,v:x.muscle}))};
+}
+window.openChart=function(m){ chart=m; render(); scrollChart(); };
+window.setChartRange=function(r){ chartRange=r; render(); scrollChart(); };
+function scrollChart(){ requestAnimationFrame(()=>{ const el=document.getElementById("chartScroll"); if(el)el.scrollLeft=el.scrollWidth; }); }
+function chartOverlay(){
+  const se=chartSeries(chart);
+  const from=chartRange?addDays(today(),-chartRange):"0000-00-00";
+  const pts=se.pts.filter(p=>p.d>=from);
+  let inner;
+  if(pts.length<2) inner='<div class="muted small" style="padding:24px 4px">Not enough data in this range.</div>';
+  else{
+    const W=Math.max(340,pts.length*14),H=210,P=26;
+    const vs=pts.map(p=>p.v),min=Math.min(...vs),max=Math.max(...vs),span=(max-min)||1;
+    const xy=pts.map((p,i)=>[P+i/(pts.length-1)*(W-2*P),H-P-((p.v-min)/span)*(H-2*P)]);
+    const poly=xy.map(c=>c[0].toFixed(1)+","+c[1].toFixed(1)).join(" ");
+    const lp=xy[xy.length-1];
+    inner=`<div id="chartScroll" style="overflow-x:auto;-webkit-overflow-scrolling:touch"><svg width="${W}" height="${H}">
+      <polyline points="${poly}" fill="none" stroke="var(--volt)" stroke-width="2"/>
+      ${xy.map(c=>`<circle cx="${c[0]}" cy="${c[1]}" r="2.5" fill="var(--volt)" opacity=".55"/>`).join("")}
+      <circle cx="${lp[0]}" cy="${lp[1]}" r="4.5" fill="var(--volt)"/>
+      <text x="${P}" y="15" fill="var(--muted)" font-size="11">max ${max}</text>
+      <text x="${P}" y="${H-8}" fill="var(--muted)" font-size="11">min ${min} · ${pts[0].d} → ${pts[pts.length-1].d} · ${pts.length} pts</text>
+    </svg></div>`;
+  }
+  return `<div style="position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:70;display:flex;align-items:center;justify-content:center;padding:14px" onclick="chart=null;render()">
+    <div class="card" style="width:100%;max-width:520px;margin:0" onclick="event.stopPropagation()">
+      <div class="row"><b class="grow" style="text-transform:uppercase;letter-spacing:.05em">${se.label}</b><b class="num" style="color:var(--volt);font-size:20px">${pts.length?pts[pts.length-1].v:"—"}</b></div>
+      <div class="scale" style="margin:12px 0">${[[30,"1M"],[90,"3M"],[180,"6M"],[0,"All"]].map(x=>`<button class="${chartRange===x[0]?"on":""}" onclick="setChartRange(${x[0]})">${x[1]}</button>`).join("")}</div>
+      ${inner}
+      <button class="btn btn-ghost" style="margin-top:12px" onclick="chart=null;render()">Close</button>
+    </div></div>`;
+}
 /* ---------- DATA ---------- */
 function csvEsc(v){ v=String(v==null?"":v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }
 function toCsv(rows){ return rows.map(r=>r.map(csvEsc).join(",")).join("\n"); }
@@ -965,7 +1039,7 @@ function viewData(){
   <button class="btn btn-ghost grow" onclick="restoreBackup()">Restore</button></div>
   <div style="height:10px"></div>
   <button class="btn btn-ghost" style="color:var(--red)" onclick="if(confirm('Erase ALL data on this phone?')){localStorage.removeItem(KEY);load();render();}">Reset everything</button>
-  <div class="tiny muted" style="margin:10px 2px 0">PHYSIQUE v2 · data lives on this device only · export regularly to your project folder.</div>`;
+  <div class="tiny muted" style="margin:10px 2px 0">PHYSIQUE v${APP_VER} · data lives on this device only · export regularly to your project folder.</div>`;
 }
 window.tplSet=function(i,f,v){
   const e=S.templates[editKey].exercises[i];
