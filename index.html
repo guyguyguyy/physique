@@ -146,8 +146,7 @@ td.num,th.num{text-align:right}
 
 <nav id="tabs">
   <button data-tab="home"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10.5V20h13v-9.5"/></svg>Home</button>
-  <button data-tab="train"><svg viewBox="0 0 24 24"><path d="M2 12h3M19 12h3M7 8v8M17 8v8M7 12h10"/><rect x="4.5" y="9" width="2.5" height="6" rx="1"/><rect x="17" y="9" width="2.5" height="6" rx="1"/></svg>Train</button>
-  <button data-tab="log"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Log</button>
+  <button data-tab="day"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Day</button>
   <button data-tab="review"><svg viewBox="0 0 24 24"><path d="M4 19V5a1 1 0 0 1 1-1h11l4 4v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"/><path d="M8 12h8M8 16h5"/></svg>Review</button>
   <button data-tab="data"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="2.6"/><path d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6"/><path d="M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6"/></svg>Data</button>
 </nav>
@@ -155,7 +154,7 @@ td.num,th.num{text-align:right}
 <script>
 "use strict";
 /* ================= storage ================= */
-const KEY="physique_v2"; const APP_VER="2.6";
+const KEY="physique_v2"; const APP_VER="3.0";
 const SESSION_KEYS=["pushHyp","pullHyp","legsHyp","pushHeavy","pullHeavy","legHeavy"];
 const SESSION_NAMES={pushHyp:"Push Hypertrophy",pullHyp:"Pull Hypertrophy",legsHyp:"Legs Hypertrophy",pushHeavy:"Push Heavy",pullHeavy:"Pull Heavy",legHeavy:"Leg Heavy"};
 let S;
@@ -218,12 +217,12 @@ function streak(){
 }
 
 /* ================= views ================= */
-let tab="home", active=null, qa=null, editKey=null, editId=null, reviewText="", planMsg="", logDate=today(), dayPick=null, chart=null, chartRange=90, lastViewKey="";
+let tab="home", active=null, editKey=null, editId=null, reviewText="", planMsg="", logDate=today(), addSess=false, planOpen=false, chart=null, chartRange=90, lastViewKey="";
 const DRAFT="physique_v2_draft";
-function persistDraft(){ try{ if(active) localStorage.setItem(DRAFT,JSON.stringify({active,qa,editId,ts:Date.now(),timerEnd:Timer.end>Date.now()?Timer.end:0})); else localStorage.removeItem(DRAFT); }catch(e){} }
+function persistDraft(){ try{ if(active) localStorage.setItem(DRAFT,JSON.stringify({active,editId,ts:Date.now(),timerEnd:Timer.end>Date.now()?Timer.end:0})); else localStorage.removeItem(DRAFT); }catch(e){} }
 function restoreDraft(){ try{
   const d=JSON.parse(localStorage.getItem(DRAFT));
-  if(d&&d.active&&Date.now()-(d.ts||0)<43200000){ active=d.active; qa=d.qa||null; editId=d.editId||null; tab="train";
+  if(d&&d.active&&Date.now()-(d.ts||0)<43200000){ active=d.active; editId=d.editId||null; tab="day"; logDate=d.active.date;
     if(d.timerEnd>Date.now()) Timer.start(Math.ceil((d.timerEnd-Date.now())/1000)); }
   else localStorage.removeItem(DRAFT);
 }catch(e){} }
@@ -233,21 +232,20 @@ function render(){
   document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===tab));
   const v=document.getElementById("view");
   if(tab==="home") v.innerHTML=viewHome();
-  else if(tab==="train") v.innerHTML=active?(qa?viewCheckin():viewSession()):viewTrain();
-  else if(tab==="log") v.innerHTML=viewLog();
+  else if(tab==="day") v.innerHTML=active?viewSession():viewDay();
   else if(tab==="review") v.innerHTML=viewReview();
   else v.innerHTML=viewData();
-  const key=tab+"|"+(active?active.id:"")+"|"+(qa?"q":"")+"|"+(chart||"")+"|"+(dayPick||"");
+  if(chart) v.insertAdjacentHTML("beforeend",chartOverlay());
+  const key=tab+"|"+(active?active.id:"")+"|"+(chart||"")+"|"+logDate;
   if(key===lastViewKey) window.scrollTo(0,y); else window.scrollTo(0,0);
   lastViewKey=key;
 }
-document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{ tab=b.dataset.tab; logDate=today(); dayPick=null; render(); });
-window.pickDay=function(iso){ dayPick=iso; render(); };
+document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{ tab=b.dataset.tab; logDate=today(); addSess=false; render(); });
+window.pickDay=function(iso){ logDate=iso; addSess=false; tab="day"; render(); };
 window.editSession=function(id){ const x=S.sessions.find(v=>v.id===id); if(!x)return;
   active=JSON.parse(JSON.stringify(x)); active.entries.forEach(e=>e.sets.forEach(st=>st.done=true));
   if(active.cardioMin==null)active.cardioMin=20; if(active.note==null)active.note="";
-  editId=id; qa=null; dayPick=null; tab="train"; render(); };
-window.chooseLog=function(kind){ logDate=dayPick; dayPick=null; tab=kind; render(); };
+  editId=id; tab="day"; render(); };
 
 /* ---------- HOME ---------- */
 function spark(data,w,h){
@@ -315,19 +313,35 @@ function weeklyTonnage(){
   }
   return weeks;
 }
+function adherenceWeeks(){
+  const t=today(),out=[];
+  for(let i=7;i>=0;i--){ const end=addDays(t,-7*i),start=addDays(end,-6);
+    let g=0,a=0,n=0;
+    S.nutrition.forEach(x=>{ if(x.date>=start&&x.date<=end&&x.protein&&x.calories){ n++;
+      if(x.protein==="yes"&&x.calories==="yes")g++; else if(x.protein!=="no"&&x.calories!=="no")a++; } });
+    out.push({g,a,n}); }
+  return out;
+}
+function adhBars(w){
+  const W=150,H=44,bw=W/w.length-4;
+  const bars=w.map((x,i)=>{
+    const gx=i*(W/w.length)+2;
+    const gh=x.n?x.g/7*(H-8):0, ah=x.n?x.a/7*(H-8):0;
+    return `<rect x="${gx}" y="${H-2-gh}" width="${bw}" height="${Math.max(gh,x.n?1:0)}" fill="var(--volt)"/>
+      <rect x="${gx}" y="${H-2-gh-ah}" width="${bw}" height="${ah}" fill="var(--amber)" opacity=".8"/>
+      ${x.n?"":`<rect x="${gx}" y="${H-3}" width="${bw}" height="1" fill="var(--line)"/>`}`;
+  }).join("");
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="margin-top:8px">${bars}</svg>`;
+}
 function viewHome(){
   const t=today();
-  const stk=streak();
   const bodySorted=[...S.body].sort((a,b)=>a.date.localeCompare(b.date));
   const w7=last7avg(S.body,"weight"), g7=last7avg(S.body,"waist");
   const latest=bodySorted[bodySorted.length-1]||null;
   const prevW7=(()=>{ const older=bodySorted.slice(0,-7); return older.length?last7avg(older,"weight"):null; })();
   const dW=(w7!=null&&prevW7!=null)?w7-prevW7:null;
   const scan=[...S.scans].sort((a,b)=>a.date.localeCompare(b.date)).pop()||null;
-  const rd=S.settings.reviewDate;
-  const dLeft=rd?daysBetween(t,rd):null;
   const weekStart=addDays(t,-6);
-  const sess7=S.sessions.filter(s=>s.date>=weekStart&&s.date<=t&&s.sessionKey!=="rest").length;
   const cardio7=S.sessions.filter(s=>s.date>=weekStart&&s.date<=t).reduce((sum,s)=>sum+cardioMinutes(s),0);
   const cardioKcal=Math.round(cardio7*(S.settings.cardioKcalMin||8));
   const sIdx=strengthIndex();
@@ -335,8 +349,10 @@ function viewHome(){
   const scansSorted=[...S.scans].sort((a,b)=>a.date.localeCompare(b.date));
   const backupAge=S.settings.lastBackup?daysBetween(S.settings.lastBackup,t):null;
   const needBackup=(S.sessions.some(s=>!String(s.id).startsWith("imp"))||S.nutrition.length)&&(backupAge==null||backupAge>14);
-  const nDays7=(()=>{ let c=0; for(let i=0;i<7;i++){ const n=nutritionFor(addDays(t,-i)); if(n&&n.protein&&n.calories)c++; } return c; })();
-  const greens7=(()=>{ let c=0; for(let i=0;i<7;i++){ const n=nutritionFor(addDays(t,-i)); if(n&&n.protein==="yes"&&n.calories==="yes")c++; } return c; })();
+  const sleep7=last7avg(S.nutrition,"sleepH");
+  const sleepPts=[...S.nutrition].filter(n=>n.sleepH!=null).sort((a,b)=>a.date.localeCompare(b.date)).slice(-21).map(n=>n.sleepH);
+  const adhW=adherenceWeeks();
+  const liftNames=[...new Set(SESSION_KEYS.flatMap(k=>S.templates[k].exercises.map(e=>e.name)))];
   const setupNeeded=SESSION_KEYS.every(k=>!S.templates[k].exercises.length);
   return `
   <div class="hero">
@@ -344,27 +360,8 @@ function viewHome(){
     <div class="line2"><span class="mega display">PHYSIQUE</span><span class="chip volt">${esc(S.settings.phase)}</span></div>
   </div>
   ${setupNeeded?`<div class="card" style="border-color:var(--volt)"><b>Set up your plan.</b><div class="small muted" style="margin:4px 0 10px">Import your starter file in <b>Data → Import</b>, or paste a plan in <b>Review</b>.</div><button class="btn btn-volt btn-sm" onclick="tab='data';render()">Go to Data</button></div>`:""}
-  <div class="statgrid">
-    <div class="stat"><div class="k">Streak</div><div class="v num">${stk}<span class="small muted"> days</span></div><div class="d flat">${stk>0?"keep it alive":"log today to start"}</div></div>
-    <div class="stat"><div class="k">Coach review</div><div class="v num">${dLeft==null?"—":dLeft<=0?"DUE":dLeft}</div><div class="d flat">${dLeft==null?"set date in Review":dLeft<=0?"generate it now":"days to go"}</div></div>
-    <div class="stat"><div class="k">Sessions · 7d</div><div class="v num">${sess7}</div><div class="d flat">of 6 planned</div></div>
-    <div class="stat"><div class="k">Nutrition green · 7d</div><div class="v num">${greens7}<span class="small muted">/${nDays7||0}</span></div><div class="d flat">both targets hit</div></div>
-  </div>
-  <h2>This month · tap a day to log</h2>
+  <h2>This month · tap a day to log or edit</h2>
   <div class="card">${calendarHTML()}</div>
-  ${dayPick?`<div style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:60;display:flex;align-items:flex-end;justify-content:center" onclick="dayPick=null;render()">
-    <div class="card" style="width:100%;max-width:520px;margin:0;border-radius:20px 20px 0 0;padding-bottom:calc(24px + env(safe-area-inset-bottom))" onclick="event.stopPropagation()">
-      <b style="text-transform:uppercase;letter-spacing:.06em">${esc(dayPick)}</b>
-      ${(()=>{const n=nutritionFor(dayPick);const b=S.body.find(x=>x.date===dayPick);
-        return `<div class="tiny muted" style="margin-top:4px">${n&&(n.protein||n.calories)?"food "+(n.protein||"?")+"/"+(n.calories||"?"):"no daily log"}${b?" · "+(b.weight!=null?b.weight+" kg":"")+(b.waist!=null?" "+b.waist+" cm":""):""}</div>`;})()}
-      <div style="height:12px"></div>
-      ${sessionsOn(dayPick).map(x=>`<button class="btn" style="margin-bottom:8px" onclick="editSession('${x.id}')">Edit · ${esc(x.name)}</button>`).join("")}
-      <button class="btn btn-volt" onclick="chooseLog('train')">Add train log</button>
-      <div style="height:8px"></div>
-      <button class="btn" onclick="chooseLog('log')">Daily log</button>
-      <div style="height:8px"></div>
-      <button class="btn btn-ghost" onclick="dayPick=null;render()">Cancel</button>
-    </div></div>`:""}
   <h2>Body trend</h2>
   <div class="statgrid">
     <div class="stat" onclick="openChart('weight')" style="cursor:pointer"><div class="k">Weight</div><div class="v num">${latest&&latest.weight!=null?latest.weight.toFixed(1):"—"}<span class="small muted"> kg</span></div>
@@ -395,10 +392,24 @@ function viewHome(){
       <div class="d flat">≈ ${cardioKcal} kcal burned</div>
       <div class="tiny muted" style="margin-top:6px">${esc(S.settings.cardioLabel)}</div></div>
   </div>
+  <h2>Recovery & nutrition</h2>
+  <div class="statgrid">
+    <div class="stat" onclick="openChart('sleep')" style="cursor:pointer"><div class="k">Sleep</div>
+      <div class="v num">${sleep7!=null?sleep7.toFixed(1):"—"}<span class="small muted"> h avg 7d</span></div>
+      <div class="d ${sleep7==null?"flat":sleep7>=7?"down":"up"}">${sleep7==null?"log sleep daily":sleep7>=7?"on target":"below 7 h target"}</div>
+      ${spark(sleepPts,150,44)}</div>
+    <div class="stat"><div class="k">Nutrition · 8 weeks</div>
+      <div class="v num">${adhW[adhW.length-1].n?Math.round(adhW[adhW.length-1].g/adhW[adhW.length-1].n*100)+"%":"—"}<span class="small muted"> green this wk</span></div>
+      ${adhBars(adhW)}
+      <div class="tiny muted" style="margin-top:2px">green = protein + calories both hit</div></div>
+  </div>
+  ${liftNames.length?`<h2>Lift progress · tap a lift</h2>
+  <div class="card"><div class="row" style="flex-wrap:wrap;gap:8px">
+    ${liftNames.map(n=>`<span class="chip" style="cursor:pointer" onclick="openChart('lift:${esc(n).replace(/'/g,"&#39;")}')">${esc(n)}</span>`).join("")}
+  </div></div>`:""}
   ${needBackup?`<div class="card" style="border-color:var(--amber)"><b style="color:var(--amber)">Back up your data.</b>
     <div class="small muted" style="margin:4px 0 10px">${backupAge==null?"No backup yet":backupAge+" days since last backup"}. Data lives only on this phone.</div>
     <button class="btn btn-sm" onclick="tab='data';render()">Go to Data → backup / export</button></div>`:""}
-  ${chart?chartOverlay():""}
   `;
 }
 
@@ -415,24 +426,24 @@ function suggestion(ex,last){
   return {cls:"beat",text:"Beat last reps at "+fmtNum(last.sets[0].w)+" "+ex.unit};
 }
 function lastDateOf(key){ for(let i=S.sessions.length-1;i>=0;i--) if(S.sessions[i].sessionKey===key) return S.sessions[i].date; return null; }
-function viewTrain(){
+function sessionPicker(){
   const lastTrain=[...S.sessions].filter(s=>s.sessionKey!=="rest").pop();
   const nextKey=lastTrain&&SESSION_KEYS.includes(lastTrain.sessionKey)?SESSION_KEYS[(SESSION_KEYS.indexOf(lastTrain.sessionKey)+1)%6]:SESSION_KEYS[0];
   const cards=SESSION_KEYS.map(k=>{ const t=S.templates[k], last=lastDateOf(k), ls=lastSessionOf(k);
     const lifts=ls?ls.entries.slice(0,2).map(e=>`${e.name.split(" ").slice(0,2).join(" ")} ${fmtNum(e.sets[0].w)}`).join(" · "):"";
     return `<button class="sessbtn" ${k===nextKey?'style="border-color:var(--volt)"':""} onclick="startSession('${k}')"><b>${esc(t.name)}${k===nextKey?' <span style="color:var(--volt)">›</span>':""}</b><span>${t.exercises.length?("last "+(last||"never")+(lifts?" · "+esc(lifts):"")):"empty — set up plan"}</span></button>`; }).join("");
   const banner=lastTrain?`<div class="card row"><div class="grow small"><span class="muted">Last: </span><b>${esc(lastTrain.name)}</b> <span class="muted">· ${esc(lastTrain.date)}</span><br><span class="muted">Up next: </span><b style="color:var(--volt)">${esc(SESSION_NAMES[nextKey])}</b></div></div>`:"";
-  return `<h1>Train${logDate!==today()?` <span class="chip warn">for ${esc(logDate)}</span>`:""}</h1>${banner}<div class="sessgrid">${cards}</div>
+  return banner+`<div class="sessgrid">${cards}</div>
   <div style="height:10px"></div>
-  <button class="btn btn-ghost" onclick="logRestDay()">Log today as Rest Day</button>
-  <h2>Rest timer</h2><div class="card"><div class="scale">${[90,120,150,180].map(s=>`<button class="${S.settings.restSec===s?"on":""}" onclick="setRest(${s})">${s}s</button>`).join("")}</div></div>`;
+  <button class="btn btn-ghost" onclick="logRestDay()">Log Rest Day</button>`;
 }
 window.setRest=s=>{ S.settings.restSec=s; save(); render(); };
 window.logRestDay=function(){
   const t=logDate;
-  if(S.sessions.some(s=>s.date===t)){ if(!confirm("Something is already logged today. Add a Rest Day anyway?")) return; }
+  if(S.sessions.some(s=>s.date===t)){ if(!confirm("Something is already logged this day. Add a Rest Day anyway?")) return; }
   S.sessions.push({id:String(Date.now()),date:t,sessionKey:"rest",name:"Rest Day",entries:[],cardio:"",cardioDone:null,cardioMin:0,abs:"",absDone:null,checkin:null,note:""});
-  save(); toast("Rest day logged"); tab="home"; render();
+  S.sessions.sort((a,b)=>a.date.localeCompare(b.date));
+  save(); toast("Rest day logged"); addSess=false; render();
 };
 window.startSession=function(key){
   const t=S.templates[key];
@@ -442,7 +453,7 @@ window.startSession=function(key){
       return { name:ex.name, unit:ex.unit, perSide:!!ex.perSide,
         sets:Array.from({length:ex.sets},(_,i)=>({ w:last?last.sets[0].w:ex.load, r:(last&&last.sets[i]?last.sets[i].r:ex.repLow), done:false })) }; }),
     cardio:t.cardio, cardioDone:null, cardioMin:20, abs:t.abs, absDone:null, checkin:null, note:"" };
-  render();
+  addSess=false; render();
 };
 function viewSession(){
   const key=active.sessionKey, tpl=S.templates[key];
@@ -483,27 +494,13 @@ window.bump=function(ei,si,f,dir){
 window.toggleSet=function(ei,si){ const st=active.entries[ei].sets[si]; st.done=!st.done; if(st.done)Timer.start(S.settings.restSec); render(); };
 window.allDone=function(ei){ active.entries[ei].sets.forEach(s=>s.done=true); Timer.start(S.settings.restSec); render(); };
 window.cardioBump=function(d){ const n=document.getElementById("sessNote"); if(n)active.note=n.value; active.cardioMin=Math.max(0,active.cardioMin+d); render(); };
-window.cancelSession=function(){ if(confirm(editId?"Discard changes? The original stays saved.":"Discard this session?")){ active=null; qa=null; editId=null; Timer.stop(); render(); } };
+window.cancelSession=function(){ if(confirm(editId?"Discard changes? The original stays saved.":"Discard this session?")){ active=null; editId=null; Timer.stop(); render(); } };
 window.finishSession=function(){
   const n=document.getElementById("sessNote"); if(n)active.note=n.value;
-  qa=active.checkin?Object.assign({sleepQ:0,energy:0,notes:""},active.checkin):{sleepQ:0,energy:0,notes:""};
-  persistDraft();
-  document.getElementById("view").innerHTML=viewCheckin(); window.scrollTo(0,0);
+  saveSession();
 };
-function scaleBtns(f,n){ let h='<div class="scale">'; for(let i=1;i<=n;i++) h+=`<button class="${qa[f]===i?"on":""}" onclick="qset('${f}',${i})">${i}</button>`; return h+"</div>"; }
-function viewCheckin(){
-  return `<h1>Check-in</h1><div class="card">
-    <div class="q"><label>Sleep quality last night</label>${scaleBtns("sleepQ",5)}</div>
-    <div class="q"><label>Energy today</label>${scaleBtns("energy",5)}</div>
-    <div class="q"><label>Notes · soreness, form</label><textarea id="qnotes" rows="2" placeholder="optional">${esc(qa.notes)}</textarea></div>
-  </div>
-  <button class="btn btn-volt" style="padding:17px" onclick="saveSession()">Save session</button>
-  <div style="height:10px"></div><button class="btn btn-ghost" onclick="qa=null;render()">← Back</button>`;
-}
-window.qset=function(f,v){ qa[f]=v; const n=document.getElementById("qnotes"); if(n)qa.notes=n.value; persistDraft(); document.getElementById("view").innerHTML=viewCheckin(); };
 window.saveSession=function(){
-  const n=document.getElementById("qnotes"); if(n)qa.notes=n.value;
-  active.checkin=qa;
+  logDate=active.date;
   active.entries=active.entries.map(e=>({name:e.name,unit:e.unit,perSide:e.perSide,
     sets:(e.sets.some(s=>s.done)?e.sets.filter(s=>s.done):e.sets).map(s=>({w:s.w,r:s.r}))}));
   if(editId){ const i=S.sessions.findIndex(x=>x.id===editId); if(i>=0)S.sessions[i]=active; else S.sessions.push(active); }
@@ -511,7 +508,7 @@ window.saveSession=function(){
   S.sessions.sort((a,b)=>a.date.localeCompare(b.date));
   const tpl=S.templates[active.sessionKey];
   if(tpl) active.entries.forEach(en=>{ const ex=tpl.exercises.find(e=>e.name===en.name); if(ex&&en.sets.length)ex.load=en.sets[0].w; });
-  save(); active=null; qa=null; editId=null; Timer.stop(); toast("Session saved"); tab="home"; render();
+  save(); active=null; editId=null; Timer.stop(); toast("Session saved"); render();
 };
 
 /* ---------- LOG ---------- */
@@ -532,11 +529,20 @@ window.sleepBump=function(d){
   n.sleepH=Math.max(0,Math.min(14,(n.sleepH==null?7:n.sleepH)+d)); save(); render();
 };
 window.saveDayNote=function(v){ nutriRec().note=v; save(); toast("Note saved"); };
-function viewLog(){
+function viewDay(){
   const t=logDate;
   const ex=S.body.find(b=>b.date===t);
-  return `<h1 class="row">Log <input type="date" max="${today()}" style="width:160px;font-weight:700" value="${esc(t)}" onchange="logDate=this.value||today();render()"></h1>
+  const sess=sessionsOn(t);
+  const workout=sess.length?
+    sess.map(x=>`<div class="card row"><div class="grow"><b>${esc(x.name)}</b>
+      <div class="tiny muted" style="margin-top:3px">${x.entries.length?x.entries.slice(0,3).map(e=>`${e.name.split(" ").slice(0,2).join(" ")} ${fmtNum(e.sets[0].w)}`).join(" · "):(x.sessionKey==="rest"?"rest day":"no exercise detail")}</div></div>
+      ${x.sessionKey==="rest"?`<button class="btn btn-ghost btn-sm" onclick="if(confirm('Remove this rest day?')){S.sessions=S.sessions.filter(v=>v.id!=='${x.id}');save();render();}">✕</button>`:`<button class="btn btn-sm" onclick="editSession('${x.id}')">Edit</button>`}</div>`).join("")
+    +(addSess?sessionPicker():`<button class="btn btn-ghost btn-sm" onclick="addSess=true;render()">+ Add another session</button>`)
+  :sessionPicker();
+  return `<h1 class="row">Day <input type="date" max="${today()}" style="width:160px;font-weight:700" value="${esc(t)}" onchange="logDate=this.value||today();render()"></h1>
   ${t!==today()?`<div class="chip warn" style="margin-bottom:10px">Logging for ${esc(t)} — not today</div>`:""}
+  <h2>Workout</h2>
+  ${workout}
   <h2>Nutrition · 5 seconds</h2>
   <div class="card">
     <div class="q"><label>Protein target reached? <span class="muted">(${esc(S.settings.proteinTarget)})</span></label>
@@ -770,12 +776,8 @@ window.shareReview=function(){ if(navigator.share)navigator.share({title:"Coach 
 function viewReview(){
   const rd=S.settings.reviewDate, dLeft=rd?daysBetween(today(),rd):null;
   return `<h1>Review</h1>
-  <div class="card row">
-    <div class="grow"><div class="tiny muted" style="text-transform:uppercase;letter-spacing:.1em;font-weight:800">Next coach review</div>
-      <div class="big num">${rd?(dLeft<=0?"DUE NOW":dLeft+" days"):"not set"}</div>
-      <div class="small muted">window since ${esc(windowStart())}</div></div>
-    <input type="date" style="width:150px" value="${esc(rd)}" onchange="S.settings.reviewDate=this.value;save();render()">
-  </div>
+  <div class="card row"><div class="grow small"><span class="muted">Next review: </span><b class="num">${rd?(dLeft<=0?"DUE NOW":rd+" · "+dLeft+"d"):"not set"}</b><div class="tiny muted">window since ${esc(windowStart())}</div></div>
+    <input type="date" style="width:140px" value="${esc(rd)}" onchange="S.settings.reviewDate=this.value;save();render()"></div>
   <h2>1 · Generate review</h2>
   <div class="card">
     <div class="small muted" style="margin-bottom:12px">Builds the full coach package from your data — offline. Copy it into ChatGPT.</div>
@@ -783,14 +785,14 @@ function viewReview(){
     ${reviewText?`<textarea rows="12" style="margin-top:12px" readonly>${esc(reviewText)}</textarea>
     <div class="row" style="margin-top:10px"><button class="btn btn-sm grow" onclick="copyReview()">Copy</button><button class="btn btn-sm grow btn-ghost" onclick="shareReview()">Share</button></div>`:""}
   </div>
-  <h2>2 · Paste new plan</h2>
-  <div class="card">
+  <h2>2 · New plan</h2>
+  ${planOpen?`<div class="card">
     <div class="small muted" style="margin-bottom:10px">Paste ChatGPT's PHYSIQUE PLAN reply. Templates, targets and review date update automatically. Old plans are kept.</div>
     <textarea id="planPaste" rows="7" placeholder="PHYSIQUE PLAN&#10;phase: ...&#10;[Push Heavy]&#10;Barbell Bench Press | 4x5-6 | 45 kg"></textarea>
     <div style="height:10px"></div>
     <button class="btn btn-volt" onclick="applyPlan()">Apply plan</button>
     ${planMsg?`<div class="small" style="margin-top:10px;color:${planMsg.startsWith("Applied")?"var(--green)":"var(--red)"}">${esc(planMsg)}</div>`:""}
-  </div>
+  </div>`:`<button class="btn btn-ghost" onclick="planOpen=true;render()">Paste new plan from ChatGPT…</button>`}
   <h2>Plan history</h2>
   ${S.plans.length?[...S.plans].reverse().map(p=>`<div class="card row"><div class="grow"><b>${esc(p.phase)}</b><div class="tiny muted">applied ${esc(p.date)}</div></div></div>`).join(""):'<div class="card small muted">No plans applied yet.</div>'}`;
 }
@@ -821,6 +823,10 @@ function chartSeries(m){
   if(m==="weight")return{label:"Weight kg",pts:body.filter(b=>b.weight!=null).map(b=>({d:b.date,v:b.weight}))};
   if(m==="waist")return{label:"Waist cm",pts:body.filter(b=>b.waist!=null).map(b=>({d:b.date,v:b.waist}))};
   if(m==="fat")return{label:"Body fat %",pts:scans.map(x=>({d:x.date,v:x.fat}))};
+  if(m==="sleep")return{label:"Sleep h",pts:[...S.nutrition].filter(n=>n.sleepH!=null).sort((a,b)=>a.date.localeCompare(b.date)).map(n=>({d:n.date,v:n.sleepH}))};
+  if(m.startsWith("lift:")){ const name=m.slice(5); let unit="kg"; const pts=[];
+    S.sessions.forEach(x=>x.entries.forEach(e=>{ if(e.name===name&&e.sets.length){ pts.push({d:x.date,v:e.sets[0].w}); unit=e.unit; } }));
+    return{label:name+" · top-set "+unit,pts}; }
   return{label:"Muscle kg",pts:scans.map(x=>({d:x.date,v:x.muscle}))};
 }
 window.openChart=function(m){ chart=m; render(); scrollChart(); };
@@ -1027,6 +1033,8 @@ function viewData(){
   <h2>Templates</h2>
   ${SESSION_KEYS.map(k=>`<button class="btn" style="margin-bottom:6px;text-align:left" onclick="editKey='${k}';render()">${esc(S.templates[k].name)} <span class="muted small">· ${S.templates[k].exercises.length} exercises</span></button>`).join("")}
   ${editor}
+  <h2>Rest timer</h2>
+  <div class="card"><div class="scale">${[90,120,150,180].map(x=>`<button class="${S.settings.restSec===x?"on":""}" onclick="setRest(${x})">${x}s</button>`).join("")}</div></div>
   <h2>Cardio settings</h2>
   <div class="card">
     <div class="q"><label>Cardio mode label</label><input type="text" value="${esc(S.settings.cardioLabel)}" onchange="S.settings.cardioLabel=this.value;save();toast('Saved')"></div>
