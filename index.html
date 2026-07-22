@@ -65,8 +65,6 @@ button{font:inherit;color:inherit;border:none;cursor:pointer;border-radius:14px}
 .exhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:2px}
 .exhead b{font-size:16px;font-weight:900;text-transform:uppercase;letter-spacing:.01em}
 .lastline{font-size:13px;color:var(--muted);margin:2px 0 8px}
-.suggest{font-size:13px;font-weight:700;margin:0 0 10px}
-.suggest.up{color:var(--green)} .suggest.hold{color:var(--amber)} .suggest.beat{color:var(--muted)}
 #timerbar{
   position:fixed;left:0;right:0;bottom:calc(66px + env(safe-area-inset-bottom));
   background:var(--volt);color:var(--volt-ink);
@@ -154,7 +152,7 @@ td.num,th.num{text-align:right}
 <script>
 "use strict";
 /* ================= storage ================= */
-const KEY="physique_v2"; const APP_VER="3.1";
+const KEY="physique_v2"; const APP_VER="3.2";
 const SESSION_KEYS=["pushHyp","pullHyp","legsHyp","pushHeavy","pullHeavy","legHeavy"];
 const SESSION_NAMES={pushHyp:"Push Hypertrophy",pullHyp:"Pull Hypertrophy",legsHyp:"Legs Hypertrophy",pushHeavy:"Push Heavy",pullHeavy:"Pull Heavy",legHeavy:"Leg Heavy"};
 let S;
@@ -217,7 +215,7 @@ function streak(){
 }
 
 /* ================= views ================= */
-let tab="home", active=null, editKey=null, editId=null, reviewText="", planMsg="", logDate=today(), addSess=false, planOpen=false, reviseId=null, sessionMsg="", chart=null, chartRange=90, lastViewKey="";
+let tab="home", active=null, editKey=null, editId=null, reviewText="", planMsg="", logDate=today(), addSess=false, planOpen=false, chart=null, chartRange=90, lastViewKey="";
 const DRAFT="physique_v2_draft";
 function persistDraft(){ try{ if(active) localStorage.setItem(DRAFT,JSON.stringify({active,editId,ts:Date.now(),timerEnd:Timer.end>Date.now()?Timer.end:0})); else localStorage.removeItem(DRAFT); }catch(e){} }
 function restoreDraft(){ try{
@@ -416,13 +414,6 @@ function lastSessionOf(key){ for(let i=S.sessions.length-1;i>=0;i--) if(S.sessio
 function lastEntryFor(key,name){ const s=lastSessionOf(key); return s?(s.entries.find(e=>e.name===name)||null):null; }
 const repRange=ex=>ex.repLow===ex.repHigh?String(ex.repLow):ex.repLow+"–"+ex.repHigh;
 const lastStr=l=>l?fmtNum(l.sets[0].w)+" × "+l.sets.map(s=>s.r).join(", "):"—";
-function suggestion(ex,last){
-  if(ex.hold) return {cls:"hold",text:"Coach: hold "+fmtNum(ex.load)+" "+ex.unit+" — build reps & control"};
-  if(!last) return {cls:"beat",text:"Target "+ex.sets+"×"+repRange(ex)+" @ "+fmtNum(ex.load)+" "+ex.unit};
-  const top=last.sets.length>=ex.sets&&last.sets.every(s=>s.r>=ex.repHigh)&&last.sets[0].w>=ex.load;
-  if(top) return {cls:"up",text:"All sets at top reps — ready for "+fmtNum(last.sets[0].w+(ex.inc||2.5))+" "+ex.unit};
-  return {cls:"beat",text:"Beat last reps at "+fmtNum(last.sets[0].w)+" "+ex.unit};
-}
 function lastDateOf(key){ for(let i=S.sessions.length-1;i>=0;i--) if(S.sessions[i].sessionKey===key) return S.sessions[i].date; return null; }
 function sessionPicker(){
   const lastTrain=[...S.sessions].filter(s=>s.sessionKey!=="rest").pop();
@@ -457,15 +448,14 @@ function viewSession(){
   const key=active.sessionKey, tpl=S.templates[key];
   const exCards=active.entries.map((en,ei)=>{
     const ex=tpl.exercises.find(e=>e.name===en.name)||{sets:en.sets.length,repLow:en.sets[0].r,repHigh:en.sets[0].r,load:en.sets[0].w,unit:en.unit,inc:2.5};
-    const last=lastEntryFor(key,en.name), sug=suggestion(ex,last);
+    const last=lastEntryFor(key,en.name);
     const rows=en.sets.map((st,si)=>`
       <div class="setrow"><div class="setnum num">${si+1}</div>
         <div class="stepper grow"><button onclick="bump(${ei},${si},'w',-1)">−</button><div class="val num grow">${fmtNum(st.w)}<span class="tiny muted"> ${en.unit}${en.perSide?"/s":""}</span></div><button onclick="bump(${ei},${si},'w',1)">+</button></div>
         <div class="stepper"><button onclick="bump(${ei},${si},'r',-1)">−</button><div class="val num">${st.r}</div><button onclick="bump(${ei},${si},'r',1)">+</button></div>
         <button class="done ${st.done?"on":""}" onclick="toggleSet(${ei},${si})">✓</button></div>`).join("");
     return `<div class="card"><div class="exhead"><b>${esc(en.name)}</b><span class="chip" style="cursor:pointer" onclick="openChart('lift:${esc(en.name).replace(/'/g,"&#39;")}')">history</span><span class="chip">${ex.sets}×${repRange(ex)}</span></div>
-      <div class="lastline num">Last ${lastStr(last)}</div>
-      <div class="suggest ${sug.cls}">${esc(sug.text)}</div>${rows}
+      <div class="lastline num">Last ${lastStr(last)}</div>${rows}
       <button class="btn btn-ghost btn-sm" style="margin-top:10px;width:100%" onclick="allDone(${ei})">✓ All sets as shown</button></div>`;
   }).join("");
   return `<h1 class="row">${esc(active.name)} <input type="date" max="${today()}" style="width:150px;font-weight:700" value="${esc(active.date)}" onchange="active.date=this.value||today();persistDraft()"></h1>${exCards}
@@ -532,22 +522,9 @@ function viewDay(){
   const ex=S.body.find(b=>b.date===t);
   const sess=sessionsOn(t);
   const workout=sess.length?
-    sess.map(x=>{
-      const header=`<div class="card row"><div class="grow"><b>${esc(x.name)}</b>
+    sess.map(x=>`<div class="card row"><div class="grow"><b>${esc(x.name)}</b>
       <div class="tiny muted" style="margin-top:3px">${x.entries.length?x.entries.slice(0,3).map(e=>`${e.name.split(" ").slice(0,2).join(" ")} ${fmtNum(e.sets[0].w)}`).join(" · "):(x.sessionKey==="rest"?"rest day":"no exercise detail")}</div></div>
-      ${x.sessionKey==="rest"?`<button class="btn btn-ghost btn-sm" onclick="if(confirm('Remove this rest day?')){S.sessions=S.sessions.filter(v=>v.id!=='${x.id}');save();render();}">✕</button>`:`<button class="btn btn-sm" onclick="editSession('${x.id}')">Edit</button>`}</div>`;
-      if(x.sessionKey==="rest"||!x.entries.length) return header;
-      const revise=`<div class="row" style="margin-top:-6px;margin-bottom:10px;gap:8px">
-        <button class="btn btn-ghost btn-sm grow" onclick="copySessionUpdate('${x.id}')">Copy for ChatGPT — revise this session</button>
-        <button class="btn btn-ghost btn-sm" onclick="toggleRevise('${x.id}')">${reviseId===x.id?"Cancel":"Paste revision"}</button></div>
-        ${reviseId===x.id?`<div class="card" style="margin-top:-4px">
-          <div class="small muted" style="margin-bottom:8px">Paste ChatGPT's SESSION UPDATE reply. Updates only ${esc(x.name)} — other sessions untouched. A later monthly plan paste will still override this.</div>
-          <textarea id="rev-${x.id}" rows="5" placeholder="SESSION UPDATE&#10;[${esc(x.name)}]&#10;Barbell Bench Press | 4x5-6 | 46 kg"></textarea>
-          <div style="height:8px"></div><button class="btn btn-volt btn-sm" onclick="applySessionUpdate('${x.id}')">Apply to ${esc(x.name)}</button>
-          ${sessionMsg?`<div class="small" style="margin-top:8px;color:${sessionMsg.startsWith("Applied")?"var(--green)":"var(--red)"}">${esc(sessionMsg)}</div>`:""}
-        </div>`:""}`;
-      return header+revise;
-    }).join("")
+      ${x.sessionKey==="rest"?`<button class="btn btn-ghost btn-sm" onclick="if(confirm('Remove this rest day?')){S.sessions=S.sessions.filter(v=>v.id!=='${x.id}');save();render();}">✕</button>`:`<button class="btn btn-sm" onclick="editSession('${x.id}')">Edit</button>`}</div>`).join("")
     +(addSess?sessionPicker():`<button class="btn btn-ghost btn-sm" onclick="addSess=true;render()">+ Add another session</button>`)
   :sessionPicker();
   return `<h1 class="row">Day <input type="date" max="${today()}" style="width:160px;font-weight:700" value="${esc(t)}" onchange="logDate=this.value||today();render()"></h1>
@@ -605,7 +582,7 @@ window.saveScan=function(){ const t=logDate;
   S.scans.push({date:t,weight:w,muscle:m,fat:f,device:"Accuniq"}); scanOpen=false; save(); toast("Scan saved"); render(); };
 
 /* ---------- REVIEW ---------- */
-function windowStart(){ return S.settings.lastReview||addDays(today(),-28); }
+function windowStart(){ return S.settings.lastReview||addDays(today(),-14); }
 function pct(n,d){ return d?Math.round(n/d*100)+"%":"UNKNOWN"; }
 function generateReview(){
   const t=today(), from=windowStart();
@@ -730,13 +707,14 @@ function keyForName(n){
   if(/leg/.test(x)) return /hyp/.test(x)?"legsHyp":"legHeavy";
   return null;
 }
-function parseSessionBlocks(text){
+function parsePlan(text){
+  if(!/PHYSIQUE PLAN/i.test(text)) return {err:"Missing 'PHYSIQUE PLAN' header"};
   const lines=text.split(/\r?\n/);
   const plan={settings:{},sessions:{}};
   let cur=null;
   for(let raw of lines){
     const line=raw.trim();
-    if(!line||/^PHYSIQUE PLAN/i.test(line)||/^SESSION UPDATE$/i.test(line))continue;
+    if(!line||/^PHYSIQUE PLAN/i.test(line))continue;
     const mH=line.match(/^\[(.+)\]$/);
     if(mH){ const k=keyForName(mH[1].trim()); if(k){ cur=k; plan.sessions[k]={name:SESSION_NAMES[k],exercises:[],abs:"",cardio:""}; } else cur=null; continue; }
     const mKV=line.match(/^(phase|review_date|protein|calories_training|calories_rest)\s*:\s*(.+)$/i);
@@ -759,18 +737,7 @@ function parseSessionBlocks(text){
       }
     }
   }
-  return plan;
-}
-function parsePlan(text){
-  if(!/PHYSIQUE PLAN/i.test(text)) return {err:"Missing 'PHYSIQUE PLAN' header"};
-  const plan=parseSessionBlocks(text);
   if(!Object.keys(plan.sessions).length) return {err:"No [Session] blocks found"};
-  return {plan};
-}
-function parseSessionUpdate(text){
-  if(!/SESSION UPDATE/i.test(text)) return {err:"Missing 'SESSION UPDATE' header"};
-  const plan=parseSessionBlocks(text);
-  if(!Object.keys(plan.sessions).length) return {err:"No [Session] block found"};
   return {plan};
 }
 window.applyPlan=function(){
@@ -790,46 +757,6 @@ window.applyPlan=function(){
   save();
   planMsg="Applied: "+Object.keys(p.sessions).length+" sessions updated · phase "+S.settings.phase+(st.review_date?" · next review "+st.review_date:"");
   toast("Plan applied"); render();
-};
-window.copySessionUpdate=function(id){
-  const x=S.sessions.find(v=>v.id===id); if(!x||!x.entries.length)return;
-  const tpl=S.templates[x.sessionKey];
-  const L=["SESSION UPDATE REQUEST","["+x.name+"] — "+x.date,""];
-  x.entries.forEach(en=>{
-    const ex=tpl?tpl.exercises.find(e=>e.name===en.name):null;
-    const did=en.sets.map(s=>fmtNum(s.w)+"x"+s.r).join(", ");
-    const target=ex?("target was "+ex.sets+"x"+repRange(ex)+" @ "+fmtNum(ex.load)+" "+en.unit):"no prior target";
-    const top=ex&&en.sets.length>=ex.sets&&en.sets.every(s=>s.r>=ex.repHigh)&&en.sets[0].w>=ex.load;
-    L.push("- "+en.name+": did "+did+" "+en.unit+" ("+target+")"+(top?" — all sets at top reps, ready to progress":""));
-  });
-  if(x.absDone!=null)L.push("- Abs: "+(x.absDone?"done":"skipped")+(x.abs?" — "+x.abs:""));
-  if(x.cardioDone!=null)L.push("- Cardio: "+(x.cardioDone?"done, "+x.cardioMin+" min":"skipped"));
-  if(x.note)L.push("- Note: "+x.note);
-  L.push("");
-  L.push("Reply with ONLY this one session revised (new weights/reps/exercise swaps for next time), in EXACTLY this format — do not include any other session:");
-  L.push("");
-  L.push("SESSION UPDATE");
-  L.push("["+x.name+"]");
-  L.push("<exercise> | <sets>x<reps or low-high> | <load> <kg|lb> | <optional flags: hold, per-side, inc=1.25>");
-  L.push("abs: <abs plan>");
-  L.push("cardio: <cardio plan>");
-  const txt=L.join("\n");
-  if(navigator.share)navigator.share({text:txt}).catch(()=>{});
-  else navigator.clipboard.writeText(txt).then(()=>toast("Copied — paste into ChatGPT"));
-};
-window.toggleRevise=function(id){ reviseId=(reviseId===id)?null:id; sessionMsg=""; render(); };
-window.applySessionUpdate=function(id){
-  const x=S.sessions.find(v=>v.id===id); if(!x)return;
-  const ta=document.getElementById("rev-"+id); if(!ta)return;
-  const r=parseSessionUpdate(ta.value);
-  if(r.err){ sessionMsg=r.err; toast("Not applied",true); render(); return; }
-  const found=Object.keys(r.plan.sessions);
-  if(!found.includes(x.sessionKey)){ sessionMsg="No ["+x.name+"] block found in the paste."; toast("Not applied",true); render(); return; }
-  S.templates[x.sessionKey]=r.plan.sessions[x.sessionKey];
-  save();
-  const extra=found.filter(k=>k!==x.sessionKey);
-  sessionMsg="Applied to "+x.name+" only."+(extra.length?" Ignored other session(s) in the paste: "+extra.map(k=>SESSION_NAMES[k]).join(", ")+".":"");
-  reviseId=null; toast("Session template updated"); render();
 };
 window.genReview=function(){ reviewText=generateReview(); render(); };
 window.copyReview=function(){ navigator.clipboard.writeText(reviewText).then(()=>toast("Review copied — paste into ChatGPT")).catch(()=>toast("Copy failed",true)); };
