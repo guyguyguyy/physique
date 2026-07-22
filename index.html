@@ -153,7 +153,7 @@ td.num,th.num{text-align:right}
 <script>
 "use strict";
 /* ================= storage ================= */
-const KEY="physique_v2"; const APP_VER="3.6";
+const KEY="physique_v2"; const APP_VER="3.7";
 const SESSION_KEYS=["pushHyp","pullHyp","legsHyp","pushHeavy","pullHeavy","legHeavy"];
 const SESSION_NAMES={pushHyp:"Push Hypertrophy",pullHyp:"Pull Hypertrophy",legsHyp:"Legs Hypertrophy",pushHeavy:"Push Heavy",pullHeavy:"Pull Heavy",legHeavy:"Leg Heavy"};
 let S;
@@ -630,21 +630,41 @@ function generateReview(){
   const L=[];
   L.push("# COACH REVIEW PACKAGE");
   L.push("");
+  const phaseEntry=[...S.plans].reverse().find(p=>p.phase===S.settings.phase);
   L.push("Data Pulled Date: "+t);
   L.push("Data Coverage Window: "+from+" to "+t+" ("+totalDays+" days)");
-  L.push("Phase: "+S.settings.phase);
+  L.push("Phase: "+S.settings.phase+(phaseEntry?" (adopted "+phaseEntry.date+")":" (adopted date UNKNOWN)"));
   L.push("Targets: protein "+S.settings.proteinTarget+" · training "+S.settings.calT+" · rest "+S.settings.calR);
   L.push("");
+  L.push("## CURRENT ACTIVE PLAN");
+  L.push("");
+  SESSION_KEYS.forEach(k=>{
+    const tp=S.templates[k];
+    L.push("["+tp.name+"]");
+    if(tp.exercises.length) tp.exercises.forEach(e=>{
+      const flags=[e.hold?"hold":"",e.perSide?"per-side":""].filter(Boolean).join(", ");
+      L.push(e.name+" | "+e.sets+"x"+repRange(e)+" | "+fmtNum(e.load)+" "+e.unit+(flags?" | "+flags:""));
+    }); else L.push("(no exercises set)");
+    L.push("abs: "+(tp.abs||"none"));
+    L.push("cardio: "+(tp.cardio||"none"));
+    L.push("");
+  });
   L.push("## OBJECTIVE FACTS");
   L.push("");
   const weeksInWin=Math.max(totalDays/7,0.1);
   const wRate=(wEntries.length>=2)?((wEntries[wEntries.length-1].weight-wEntries[0].weight)/weeksInWin):null;
   const gEntries=body.filter(b=>b.waist!=null);
   const gRate=(gEntries.length>=2)?((gEntries[gEntries.length-1].waist-gEntries[0].waist)/weeksInWin):null;
-  L.push("Weight: "+(ws.length?ws.length+" entries · avg "+avg(ws).toFixed(2)+" kg · range "+Math.min(...ws).toFixed(1)+"-"+Math.max(...ws).toFixed(1)+" · latest "+ws[ws.length-1].toFixed(1)+" kg ("+wEntries[wEntries.length-1].date+")"+(wRate!=null?" · rate "+(wRate>=0?"+":"")+wRate.toFixed(2)+" kg/week":""):"UNKNOWN — no entries"));
-  L.push("Waist: "+(gs.length?gs.length+" entries · avg "+avg(gs).toFixed(2)+" cm · range "+Math.min(...gs).toFixed(1)+"-"+Math.max(...gs).toFixed(1)+" · latest "+gs[gs.length-1].toFixed(1)+" cm"+(gRate!=null?" · rate "+(gRate>=0?"+":"")+gRate.toFixed(2)+" cm/week":""):"UNKNOWN — no entries"));
+  const w7=last7avg(S.body,"weight"), w14=avg([...S.body].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,14).map(b=>b.weight).filter(v=>v!=null));
+  const g7=last7avg(S.body,"waist"), g14=avg([...S.body].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,14).map(b=>b.waist).filter(v=>v!=null));
+  L.push("Weight: "+(ws.length?ws.length+" entries · avg "+avg(ws).toFixed(2)+" kg · range "+Math.min(...ws).toFixed(1)+"-"+Math.max(...ws).toFixed(1)+" · latest "+ws[ws.length-1].toFixed(1)+" kg ("+wEntries[wEntries.length-1].date+")"+(w7!=null?" · 7d avg "+w7.toFixed(2):"")+(w14!=null?" · 14d avg "+w14.toFixed(2):"")+(wRate!=null?" · rate "+(wRate>=0?"+":"")+wRate.toFixed(2)+" kg/week":""):"UNKNOWN — no entries"));
+  L.push("Waist: "+(gs.length?gs.length+" entries · avg "+avg(gs).toFixed(2)+" cm · range "+Math.min(...gs).toFixed(1)+"-"+Math.max(...gs).toFixed(1)+" · latest "+gs[gs.length-1].toFixed(1)+" cm"+(g7!=null?" · 7d avg "+g7.toFixed(2):"")+(g14!=null?" · 14d avg "+g14.toFixed(2):"")+(gRate!=null?" · rate "+(gRate>=0?"+":"")+gRate.toFixed(2)+" cm/week":""):"UNKNOWN — no entries"));
+  if(phaseEntry&&wEntries.length){ const since=wEntries.filter(b=>b.date>=phaseEntry.date);
+    if(since.length>=2) L.push("Weight since phase adopted ("+phaseEntry.date+"): "+(since[since.length-1].weight-since[0].weight>=0?"+":"")+(since[since.length-1].weight-since[0].weight).toFixed(1)+" kg"); }
   if(scans.length){ scans.forEach(s=>L.push("Body scan "+s.date+": "+s.weight+" kg · "+s.muscle+" kg muscle · "+s.fat+"% fat ("+(s.device||"Accuniq")+")"));
     if(prevScan) L.push("Previous scan "+prevScan.date+": "+prevScan.weight+" kg · "+prevScan.muscle+" kg muscle · "+prevScan.fat+"% fat");
+    const latestScan=scans[scans.length-1];
+    if(prevScan) L.push("Change since previous scan: "+(latestScan.weight-prevScan.weight>=0?"+":"")+(latestScan.weight-prevScan.weight).toFixed(1)+" kg · "+(latestScan.muscle-prevScan.muscle>=0?"+":"")+(latestScan.muscle-prevScan.muscle).toFixed(1)+" kg muscle · "+(latestScan.fat-prevScan.fat>=0?"+":"")+(latestScan.fat-prevScan.fat).toFixed(1)+"% fat");
   } else L.push("Body scans: none in window"+(prevScan?" (last: "+prevScan.date+", "+prevScan.fat+"% fat)":""));
   L.push("");
   const priorFrom=addDays(from,-totalDays), priorTrain=S.sessions.filter(s=>s.date>priorFrom&&s.date<=from&&s.sessionKey!=="rest").length;
@@ -657,25 +677,31 @@ function generateReview(){
   L.push("Progression events:");
   if(prog.length) prog.forEach(p=>L.push("- "+p)); else L.push("- none detected");
   L.push("");
-  L.push("Per-exercise status this window (first vs last top set logged):");
-  const byLift={};
-  train.forEach(s=>s.entries.forEach(e=>{ if(!e.sets.length)return;
-    if(!byLift[e.name])byLift[e.name]={first:null,last:null,unit:e.unit,topReps:true};
-    const top=e.sets[0];
-    if(!byLift[e.name].first)byLift[e.name].first={w:top.w,date:s.date};
-    byLift[e.name].last={w:top.w,date:s.date};
-    const tpl=S.templates[s.sessionKey]&&S.templates[s.sessionKey].exercises.find(x=>x.name===e.name);
-    if(tpl&&!e.sets.every(st=>st.r>=tpl.repHigh)) byLift[e.name].topReps=false;
-  }));
-  const liftKeys=Object.keys(byLift);
-  if(liftKeys.length){
-    liftKeys.forEach(n=>{ const x=byLift[n];
-      const kgFirst=toKg(x.first.w,x.unit), kgLast=toKg(x.last.w,x.unit);
-      const status=kgLast>kgFirst?"progressed":(kgLast<kgFirst?"decreased":"stalled");
-      L.push("- "+n+": "+fmtNum(x.first.w)+" "+x.unit+" ("+x.first.date+") -> "+fmtNum(x.last.w)+" "+x.unit+" ("+x.last.date+") — "+status+(x.topReps?", top reps hit":", below top reps"));
-    });
-  } else L.push("- no exercises logged this window");
+  L.push("## EXERCISE HISTORY");
   L.push("");
+  SESSION_KEYS.forEach(k=>{
+    const tp=S.templates[k]; if(!tp.exercises.length)return;
+    const histSess=[...S.sessions].filter(s=>s.sessionKey===k&&s.entries.length).sort((a,b)=>b.date.localeCompare(a.date));
+    tp.exercises.forEach(ex=>{
+      const logs=[]; histSess.forEach(s=>{ const e=s.entries.find(x=>x.name===ex.name); if(e&&e.sets.length) logs.push({date:s.date,sets:e.sets,unit:e.unit}); });
+      L.push("### "+tp.name+" — "+ex.name);
+      L.push("Current prescription: "+ex.sets+"x"+repRange(ex)+" @ "+fmtNum(ex.load)+" "+ex.unit);
+      if(!logs.length){ L.push("No logged workouts for this exercise."); L.push(""); return; }
+      const latest=logs[0];
+      L.push("Latest ("+latest.date+"): "+latest.sets.map(st=>fmtNum(st.w)+"x"+st.r).join(", ")+" "+latest.unit);
+      const topReps=latest.sets.every(st=>st.r>=ex.repHigh);
+      L.push("All sets reached max reps: "+(topReps?"YES":"NO")+" · Sets completed: "+latest.sets.length+"/"+ex.sets);
+      logs.slice(1,3).forEach((l,i)=>L.push("Previous "+(i+1)+" ("+l.date+"): "+l.sets.map(st=>fmtNum(st.w)+"x"+st.r).join(", ")+" "+l.unit));
+      if(logs.length>1){
+        const first=logs[logs.length-1];
+        const kgFirst=toKg(first.sets[0].w,first.unit), kgLast=toKg(latest.sets[0].w,latest.unit);
+        const status=kgLast>kgFirst?"progressed":(kgLast<kgFirst?"decreased":"stalled");
+        L.push("Trend: "+fmtNum(first.sets[0].w)+" "+first.unit+" ("+first.date+") -> "+fmtNum(latest.sets[0].w)+" "+latest.unit+" ("+latest.date+") — "+status+" over "+logs.length+" logged workouts");
+      }
+      L.push("Available workouts: "+logs.length);
+      L.push("");
+    });
+  });
   L.push("## NUTRITION ADHERENCE (self-reported daily)");
   L.push("");
   L.push("Days answered: "+nutri.length+"/"+totalDays);
