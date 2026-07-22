@@ -1,4 +1,4 @@
-const CACHE = "physique-3.4";
+const CACHE = "physique-3.5";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {

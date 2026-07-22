@@ -153,7 +153,7 @@ td.num,th.num{text-align:right}
 <script>
 "use strict";
 /* ================= storage ================= */
-const KEY="physique_v2"; const APP_VER="3.4";
+const KEY="physique_v2"; const APP_VER="3.5";
 const SESSION_KEYS=["pushHyp","pullHyp","legsHyp","pushHeavy","pullHeavy","legHeavy"];
 const SESSION_NAMES={pushHyp:"Push Hypertrophy",pullHyp:"Pull Hypertrophy",legsHyp:"Legs Hypertrophy",pushHeavy:"Push Heavy",pullHeavy:"Pull Heavy",legHeavy:"Leg Heavy"};
 let S;
@@ -788,7 +788,7 @@ window.applyPlan=function(){
   if(st.calories_training)S.settings.calT=st.calories_training;
   if(st.calories_rest)S.settings.calR=st.calories_rest;
   Object.entries(p.sessions).forEach(([k,v])=>{ if(v.exercises.length) S.templates[k]=v; });
-  S.settings.lastReview=today();
+  if(isRealDate(st.review_date||"")) S.settings.lastReview=today();
   S.plans.push({date:today(),phase:S.settings.phase,raw:txt});
   save();
   planMsg="Applied: "+Object.keys(p.sessions).length+" sessions updated · phase "+S.settings.phase+(isRealDate(st.review_date||"")?" · next review "+st.review_date:"")+dateWarning;
@@ -800,8 +800,10 @@ window.shareReview=function(){ if(navigator.share)navigator.share({title:"Coach 
 function viewReview(){
   const rd=S.settings.reviewDate, dLeft=rd?daysBetween(today(),rd):null;
   return `<h1>Review</h1>
-  <div class="card row"><div class="grow small"><span class="muted">Next review: </span><b class="num">${rd?(dLeft<=0?"DUE NOW":rd+" · "+dLeft+"d"):"not set"}</b><div class="tiny muted">window since ${esc(windowStart())}</div></div>
+  <div class="card row"><div class="grow small"><span class="muted">Next review: </span><b class="num">${rd?(dLeft<=0?"DUE NOW":rd+" · "+dLeft+"d"):"not set"}</b></div>
     <input type="date" style="width:140px" value="${esc(rd)}" onchange="S.settings.reviewDate=this.value;save();render()"></div>
+  <div class="card row"><div class="grow small"><span class="muted">Data window starts: </span><b class="num">${esc(windowStart())}</b><div class="tiny muted">normally moves only when you apply a plan with a valid new review date</div></div>
+    <input type="date" style="width:140px" value="${esc(windowStart())}" onchange="S.settings.lastReview=this.value;save();render()"></div>
   <h2>1 · Generate review</h2>
   <div class="card">
     <div class="small muted" style="margin-bottom:12px">Builds the full coach package from your data — offline. Copy it into ChatGPT.</div>
