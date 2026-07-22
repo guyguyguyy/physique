@@ -154,7 +154,7 @@ td.num,th.num{text-align:right}
 <script>
 "use strict";
 /* ================= storage ================= */
-const KEY="physique_v2"; const APP_VER="3.0";
+const KEY="physique_v2"; const APP_VER="3.1";
 const SESSION_KEYS=["pushHyp","pullHyp","legsHyp","pushHeavy","pullHeavy","legHeavy"];
 const SESSION_NAMES={pushHyp:"Push Hypertrophy",pullHyp:"Pull Hypertrophy",legsHyp:"Legs Hypertrophy",pushHeavy:"Push Heavy",pullHeavy:"Pull Heavy",legHeavy:"Leg Heavy"};
 let S;
@@ -217,7 +217,7 @@ function streak(){
 }
 
 /* ================= views ================= */
-let tab="home", active=null, editKey=null, editId=null, reviewText="", planMsg="", logDate=today(), addSess=false, planOpen=false, chart=null, chartRange=90, lastViewKey="";
+let tab="home", active=null, editKey=null, editId=null, reviewText="", planMsg="", logDate=today(), addSess=false, planOpen=false, reviseId=null, sessionMsg="", chart=null, chartRange=90, lastViewKey="";
 const DRAFT="physique_v2_draft";
 function persistDraft(){ try{ if(active) localStorage.setItem(DRAFT,JSON.stringify({active,editId,ts:Date.now(),timerEnd:Timer.end>Date.now()?Timer.end:0})); else localStorage.removeItem(DRAFT); }catch(e){} }
 function restoreDraft(){ try{
@@ -266,14 +266,17 @@ function calendarHTML(){
     const iso=Y+"-"+String(M).padStart(2,"0")+"-"+String(d).padStart(2,"0");
     const future=iso>t;
     const st=future?"future":dayState(iso);
-    const trained=sessionsOn(iso).length>0;
-    cells+=`<div class="day ${st}${iso===t?" today":""}" ${future?"":`onclick="pickDay('${iso}')" style="cursor:pointer"`}>${d}${trained?'<div class="dot"></div>':""}</div>`;
+    const onDay=sessionsOn(iso);
+    const isRest=onDay.length&&onDay.every(x=>x.sessionKey==="rest");
+    const trained=onDay.length>0;
+    cells+=`<div class="day ${st}${iso===t?" today":""}" ${future?"":`onclick="pickDay('${iso}')" style="cursor:pointer"`}>${d}${isRest?'<div class="tiny" style="color:var(--muted);margin-top:1px">R</div>':(trained?'<div class="dot"></div>':"")}</div>`;
   }
   return `<div class="cal">${wd}${cells}</div>
   <div class="row tiny muted" style="margin-top:10px;gap:14px;flex-wrap:wrap">
     <span><span style="color:var(--volt)">■</span> logged</span>
     <span><span style="color:var(--amber)">■</span> partial</span>
     <span>• trained</span>
+    <span>R rest day</span>
   </div>`;
 }
 function last7avg(arr,field){
@@ -352,7 +355,6 @@ function viewHome(){
   const sleep7=last7avg(S.nutrition,"sleepH");
   const sleepPts=[...S.nutrition].filter(n=>n.sleepH!=null).sort((a,b)=>a.date.localeCompare(b.date)).slice(-21).map(n=>n.sleepH);
   const adhW=adherenceWeeks();
-  const liftNames=[...new Set(SESSION_KEYS.flatMap(k=>S.templates[k].exercises.map(e=>e.name)))];
   const setupNeeded=SESSION_KEYS.every(k=>!S.templates[k].exercises.length);
   return `
   <div class="hero">
@@ -403,10 +405,6 @@ function viewHome(){
       ${adhBars(adhW)}
       <div class="tiny muted" style="margin-top:2px">green = protein + calories both hit</div></div>
   </div>
-  ${liftNames.length?`<h2>Lift progress · tap a lift</h2>
-  <div class="card"><div class="row" style="flex-wrap:wrap;gap:8px">
-    ${liftNames.map(n=>`<span class="chip" style="cursor:pointer" onclick="openChart('lift:${esc(n).replace(/'/g,"&#39;")}')">${esc(n)}</span>`).join("")}
-  </div></div>`:""}
   ${needBackup?`<div class="card" style="border-color:var(--amber)"><b style="color:var(--amber)">Back up your data.</b>
     <div class="small muted" style="margin:4px 0 10px">${backupAge==null?"No backup yet":backupAge+" days since last backup"}. Data lives only on this phone.</div>
     <button class="btn btn-sm" onclick="tab='data';render()">Go to Data → backup / export</button></div>`:""}
@@ -465,7 +463,7 @@ function viewSession(){
         <div class="stepper grow"><button onclick="bump(${ei},${si},'w',-1)">−</button><div class="val num grow">${fmtNum(st.w)}<span class="tiny muted"> ${en.unit}${en.perSide?"/s":""}</span></div><button onclick="bump(${ei},${si},'w',1)">+</button></div>
         <div class="stepper"><button onclick="bump(${ei},${si},'r',-1)">−</button><div class="val num">${st.r}</div><button onclick="bump(${ei},${si},'r',1)">+</button></div>
         <button class="done ${st.done?"on":""}" onclick="toggleSet(${ei},${si})">✓</button></div>`).join("");
-    return `<div class="card"><div class="exhead"><b>${esc(en.name)}</b><span class="chip">${ex.sets}×${repRange(ex)}</span></div>
+    return `<div class="card"><div class="exhead"><b>${esc(en.name)}</b><span class="chip" style="cursor:pointer" onclick="openChart('lift:${esc(en.name).replace(/'/g,"&#39;")}')">history</span><span class="chip">${ex.sets}×${repRange(ex)}</span></div>
       <div class="lastline num">Last ${lastStr(last)}</div>
       <div class="suggest ${sug.cls}">${esc(sug.text)}</div>${rows}
       <button class="btn btn-ghost btn-sm" style="margin-top:10px;width:100%" onclick="allDone(${ei})">✓ All sets as shown</button></div>`;
@@ -534,9 +532,22 @@ function viewDay(){
   const ex=S.body.find(b=>b.date===t);
   const sess=sessionsOn(t);
   const workout=sess.length?
-    sess.map(x=>`<div class="card row"><div class="grow"><b>${esc(x.name)}</b>
+    sess.map(x=>{
+      const header=`<div class="card row"><div class="grow"><b>${esc(x.name)}</b>
       <div class="tiny muted" style="margin-top:3px">${x.entries.length?x.entries.slice(0,3).map(e=>`${e.name.split(" ").slice(0,2).join(" ")} ${fmtNum(e.sets[0].w)}`).join(" · "):(x.sessionKey==="rest"?"rest day":"no exercise detail")}</div></div>
-      ${x.sessionKey==="rest"?`<button class="btn btn-ghost btn-sm" onclick="if(confirm('Remove this rest day?')){S.sessions=S.sessions.filter(v=>v.id!=='${x.id}');save();render();}">✕</button>`:`<button class="btn btn-sm" onclick="editSession('${x.id}')">Edit</button>`}</div>`).join("")
+      ${x.sessionKey==="rest"?`<button class="btn btn-ghost btn-sm" onclick="if(confirm('Remove this rest day?')){S.sessions=S.sessions.filter(v=>v.id!=='${x.id}');save();render();}">✕</button>`:`<button class="btn btn-sm" onclick="editSession('${x.id}')">Edit</button>`}</div>`;
+      if(x.sessionKey==="rest"||!x.entries.length) return header;
+      const revise=`<div class="row" style="margin-top:-6px;margin-bottom:10px;gap:8px">
+        <button class="btn btn-ghost btn-sm grow" onclick="copySessionUpdate('${x.id}')">Copy for ChatGPT — revise this session</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleRevise('${x.id}')">${reviseId===x.id?"Cancel":"Paste revision"}</button></div>
+        ${reviseId===x.id?`<div class="card" style="margin-top:-4px">
+          <div class="small muted" style="margin-bottom:8px">Paste ChatGPT's SESSION UPDATE reply. Updates only ${esc(x.name)} — other sessions untouched. A later monthly plan paste will still override this.</div>
+          <textarea id="rev-${x.id}" rows="5" placeholder="SESSION UPDATE&#10;[${esc(x.name)}]&#10;Barbell Bench Press | 4x5-6 | 46 kg"></textarea>
+          <div style="height:8px"></div><button class="btn btn-volt btn-sm" onclick="applySessionUpdate('${x.id}')">Apply to ${esc(x.name)}</button>
+          ${sessionMsg?`<div class="small" style="margin-top:8px;color:${sessionMsg.startsWith("Applied")?"var(--green)":"var(--red)"}">${esc(sessionMsg)}</div>`:""}
+        </div>`:""}`;
+      return header+revise;
+    }).join("")
     +(addSess?sessionPicker():`<button class="btn btn-ghost btn-sm" onclick="addSess=true;render()">+ Add another session</button>`)
   :sessionPicker();
   return `<h1 class="row">Day <input type="date" max="${today()}" style="width:160px;font-weight:700" value="${esc(t)}" onchange="logDate=this.value||today();render()"></h1>
@@ -719,14 +730,13 @@ function keyForName(n){
   if(/leg/.test(x)) return /hyp/.test(x)?"legsHyp":"legHeavy";
   return null;
 }
-function parsePlan(text){
-  if(!/PHYSIQUE PLAN/i.test(text)) return {err:"Missing 'PHYSIQUE PLAN' header"};
+function parseSessionBlocks(text){
   const lines=text.split(/\r?\n/);
   const plan={settings:{},sessions:{}};
   let cur=null;
   for(let raw of lines){
     const line=raw.trim();
-    if(!line||/^PHYSIQUE PLAN/i.test(line))continue;
+    if(!line||/^PHYSIQUE PLAN/i.test(line)||/^SESSION UPDATE$/i.test(line))continue;
     const mH=line.match(/^\[(.+)\]$/);
     if(mH){ const k=keyForName(mH[1].trim()); if(k){ cur=k; plan.sessions[k]={name:SESSION_NAMES[k],exercises:[],abs:"",cardio:""}; } else cur=null; continue; }
     const mKV=line.match(/^(phase|review_date|protein|calories_training|calories_rest)\s*:\s*(.+)$/i);
@@ -749,7 +759,18 @@ function parsePlan(text){
       }
     }
   }
+  return plan;
+}
+function parsePlan(text){
+  if(!/PHYSIQUE PLAN/i.test(text)) return {err:"Missing 'PHYSIQUE PLAN' header"};
+  const plan=parseSessionBlocks(text);
   if(!Object.keys(plan.sessions).length) return {err:"No [Session] blocks found"};
+  return {plan};
+}
+function parseSessionUpdate(text){
+  if(!/SESSION UPDATE/i.test(text)) return {err:"Missing 'SESSION UPDATE' header"};
+  const plan=parseSessionBlocks(text);
+  if(!Object.keys(plan.sessions).length) return {err:"No [Session] block found"};
   return {plan};
 }
 window.applyPlan=function(){
@@ -769,6 +790,46 @@ window.applyPlan=function(){
   save();
   planMsg="Applied: "+Object.keys(p.sessions).length+" sessions updated · phase "+S.settings.phase+(st.review_date?" · next review "+st.review_date:"");
   toast("Plan applied"); render();
+};
+window.copySessionUpdate=function(id){
+  const x=S.sessions.find(v=>v.id===id); if(!x||!x.entries.length)return;
+  const tpl=S.templates[x.sessionKey];
+  const L=["SESSION UPDATE REQUEST","["+x.name+"] — "+x.date,""];
+  x.entries.forEach(en=>{
+    const ex=tpl?tpl.exercises.find(e=>e.name===en.name):null;
+    const did=en.sets.map(s=>fmtNum(s.w)+"x"+s.r).join(", ");
+    const target=ex?("target was "+ex.sets+"x"+repRange(ex)+" @ "+fmtNum(ex.load)+" "+en.unit):"no prior target";
+    const top=ex&&en.sets.length>=ex.sets&&en.sets.every(s=>s.r>=ex.repHigh)&&en.sets[0].w>=ex.load;
+    L.push("- "+en.name+": did "+did+" "+en.unit+" ("+target+")"+(top?" — all sets at top reps, ready to progress":""));
+  });
+  if(x.absDone!=null)L.push("- Abs: "+(x.absDone?"done":"skipped")+(x.abs?" — "+x.abs:""));
+  if(x.cardioDone!=null)L.push("- Cardio: "+(x.cardioDone?"done, "+x.cardioMin+" min":"skipped"));
+  if(x.note)L.push("- Note: "+x.note);
+  L.push("");
+  L.push("Reply with ONLY this one session revised (new weights/reps/exercise swaps for next time), in EXACTLY this format — do not include any other session:");
+  L.push("");
+  L.push("SESSION UPDATE");
+  L.push("["+x.name+"]");
+  L.push("<exercise> | <sets>x<reps or low-high> | <load> <kg|lb> | <optional flags: hold, per-side, inc=1.25>");
+  L.push("abs: <abs plan>");
+  L.push("cardio: <cardio plan>");
+  const txt=L.join("\n");
+  if(navigator.share)navigator.share({text:txt}).catch(()=>{});
+  else navigator.clipboard.writeText(txt).then(()=>toast("Copied — paste into ChatGPT"));
+};
+window.toggleRevise=function(id){ reviseId=(reviseId===id)?null:id; sessionMsg=""; render(); };
+window.applySessionUpdate=function(id){
+  const x=S.sessions.find(v=>v.id===id); if(!x)return;
+  const ta=document.getElementById("rev-"+id); if(!ta)return;
+  const r=parseSessionUpdate(ta.value);
+  if(r.err){ sessionMsg=r.err; toast("Not applied",true); render(); return; }
+  const found=Object.keys(r.plan.sessions);
+  if(!found.includes(x.sessionKey)){ sessionMsg="No ["+x.name+"] block found in the paste."; toast("Not applied",true); render(); return; }
+  S.templates[x.sessionKey]=r.plan.sessions[x.sessionKey];
+  save();
+  const extra=found.filter(k=>k!==x.sessionKey);
+  sessionMsg="Applied to "+x.name+" only."+(extra.length?" Ignored other session(s) in the paste: "+extra.map(k=>SESSION_NAMES[k]).join(", ")+".":"");
+  reviseId=null; toast("Session template updated"); render();
 };
 window.genReview=function(){ reviewText=generateReview(); render(); };
 window.copyReview=function(){ navigator.clipboard.writeText(reviewText).then(()=>toast("Review copied — paste into ChatGPT")).catch(()=>toast("Copy failed",true)); };
