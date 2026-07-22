@@ -153,7 +153,7 @@ td.num,th.num{text-align:right}
 <script>
 "use strict";
 /* ================= storage ================= */
-const KEY="physique_v2"; const APP_VER="3.7";
+const KEY="physique_v2"; const APP_VER="3.8";
 const SESSION_KEYS=["pushHyp","pullHyp","legsHyp","pushHeavy","pullHeavy","legHeavy"];
 const SESSION_NAMES={pushHyp:"Push Hypertrophy",pullHyp:"Pull Hypertrophy",legsHyp:"Legs Hypertrophy",pushHeavy:"Push Heavy",pullHeavy:"Pull Heavy",legHeavy:"Leg Heavy"};
 let S;
@@ -439,9 +439,8 @@ window.startSession=function(key){
   const t=S.templates[key];
   if(!t.exercises.length){ toast("Template empty — import your plan first",true); return; }
   active={ id:String(Date.now()), date:logDate, sessionKey:key, name:t.name,
-    entries:t.exercises.map(ex=>{ const last=lastEntryFor(key,ex.name);
-      return { name:ex.name, unit:ex.unit, perSide:!!ex.perSide,
-        sets:Array.from({length:ex.sets},(_,i)=>({ w:last?last.sets[0].w:ex.load, r:(last&&last.sets[i]?last.sets[i].r:ex.repLow), done:false })) }; }),
+    entries:t.exercises.map(ex=>({ name:ex.name, unit:ex.unit, perSide:!!ex.perSide,
+      sets:Array.from({length:ex.sets},()=>({ w:ex.load, r:ex.repLow, done:false })) })),
     cardio:t.cardio, cardioDone:null, cardioMin:20, abs:t.abs, absDone:null, checkin:null, note:"" };
   addSess=false; render();
 };
