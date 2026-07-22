@@ -153,7 +153,7 @@ td.num,th.num{text-align:right}
 <script>
 "use strict";
 /* ================= storage ================= */
-const KEY="physique_v2"; const APP_VER="3.5";
+const KEY="physique_v2"; const APP_VER="3.6";
 const SESSION_KEYS=["pushHyp","pullHyp","legsHyp","pushHeavy","pullHeavy","legHeavy"];
 const SESSION_NAMES={pushHyp:"Push Hypertrophy",pullHyp:"Pull Hypertrophy",legsHyp:"Legs Hypertrophy",pushHeavy:"Push Heavy",pullHeavy:"Pull Heavy",legHeavy:"Leg Heavy"};
 let S;
@@ -583,7 +583,11 @@ window.saveScan=function(){ const t=logDate;
   S.scans.push({date:t,weight:w,muscle:m,fat:f,device:"Accuniq"}); scanOpen=false; save(); toast("Scan saved"); render(); };
 
 /* ---------- REVIEW ---------- */
-function windowStart(){ return S.settings.lastReview||addDays(today(),-14); }
+function earliestDate(){
+  const dates=[...S.body.map(b=>b.date),...S.scans.map(b=>b.date),...S.sessions.map(b=>b.date),...S.nutrition.map(b=>b.date)];
+  return dates.length?dates.reduce((a,b)=>a<b?a:b):addDays(today(),-14);
+}
+function windowStart(){ return earliestDate(); }
 function pct(n,d){ return d?Math.round(n/d*100)+"%":"UNKNOWN"; }
 function generateReview(){
   const t=today(), from=windowStart();
@@ -710,7 +714,6 @@ function planFormatSpec(){
   return [
 "PHYSIQUE PLAN",
 "phase: <phase name>",
-"review_date: <an actual date, e.g. 2026-08-14 — never write the literal text \"YYYY-MM-DD\">",
 "protein: <target, e.g. 160-170 g>",
 "calories_training: <e.g. 1750-1850 kcal>",
 "calories_rest: <e.g. 1600-1700 kcal>",
@@ -765,13 +768,6 @@ function parsePlan(text){
   if(!Object.keys(plan.sessions).length) return {err:"No [Session] blocks found"};
   return {plan};
 }
-function isRealDate(s){
-  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s); if(!m)return false;
-  const y=+m[1],mo=+m[2],d=+m[3];
-  if(mo<1||mo>12||d<1||d>31)return false;
-  const dt=new Date(Date.UTC(y,mo-1,d));
-  return dt.getUTCFullYear()===y&&dt.getUTCMonth()===mo-1&&dt.getUTCDate()===d;
-}
 window.applyPlan=function(){
   const txt=document.getElementById("planPaste").value;
   const r=parsePlan(txt);
@@ -779,31 +775,21 @@ window.applyPlan=function(){
   const p=r.plan;
   const st=p.settings;
   if(st.phase)S.settings.phase=st.phase;
-  let dateWarning="";
-  if(st.review_date){
-    if(isRealDate(st.review_date)) S.settings.reviewDate=st.review_date;
-    else dateWarning=" ⚠ review_date '"+st.review_date+"' isn't a real date — kept your previous review date ("+S.settings.reviewDate+"). Ask ChatGPT for an exact date next time.";
-  }
   if(st.protein)S.settings.proteinTarget=st.protein;
   if(st.calories_training)S.settings.calT=st.calories_training;
   if(st.calories_rest)S.settings.calR=st.calories_rest;
   Object.entries(p.sessions).forEach(([k,v])=>{ if(v.exercises.length) S.templates[k]=v; });
-  if(isRealDate(st.review_date||"")) S.settings.lastReview=today();
   S.plans.push({date:today(),phase:S.settings.phase,raw:txt});
   save();
-  planMsg="Applied: "+Object.keys(p.sessions).length+" sessions updated · phase "+S.settings.phase+(isRealDate(st.review_date||"")?" · next review "+st.review_date:"")+dateWarning;
-  toast(dateWarning?"Plan applied — check date warning":"Plan applied"); render();
+  planMsg="Applied: "+Object.keys(p.sessions).length+" sessions updated · phase "+S.settings.phase;
+  toast("Plan applied"); render();
 };
 window.genReview=function(){ reviewText=generateReview(); render(); };
 window.copyReview=function(){ navigator.clipboard.writeText(reviewText).then(()=>toast("Review copied — paste into ChatGPT")).catch(()=>toast("Copy failed",true)); };
 window.shareReview=function(){ if(navigator.share)navigator.share({title:"Coach review "+today(),text:reviewText}).catch(()=>{}); else copyReview(); };
 function viewReview(){
-  const rd=S.settings.reviewDate, dLeft=rd?daysBetween(today(),rd):null;
   return `<h1>Review</h1>
-  <div class="card row"><div class="grow small"><span class="muted">Next review: </span><b class="num">${rd?(dLeft<=0?"DUE NOW":rd+" · "+dLeft+"d"):"not set"}</b></div>
-    <input type="date" style="width:140px" value="${esc(rd)}" onchange="S.settings.reviewDate=this.value;save();render()"></div>
-  <div class="card row"><div class="grow small"><span class="muted">Data window starts: </span><b class="num">${esc(windowStart())}</b><div class="tiny muted">normally moves only when you apply a plan with a valid new review date</div></div>
-    <input type="date" style="width:140px" value="${esc(windowStart())}" onchange="S.settings.lastReview=this.value;save();render()"></div>
+  <div class="card small muted">Generate whenever you want — pulls your complete history, no schedule to manage.</div>
   <h2>1 · Generate review</h2>
   <div class="card">
     <div class="small muted" style="margin-bottom:12px">Builds the full coach package from your data — offline. Copy it into ChatGPT.</div>
@@ -927,7 +913,7 @@ function importText(text){
     const seg=text.split(/=====[^=\n]*=====/)[0];
     const r=parsePlan(text);
     if(r.plan){ const p=r.plan, st=p.settings;
-      if(st.phase)S.settings.phase=st.phase; if(st.review_date)S.settings.reviewDate=st.review_date;
+      if(st.phase)S.settings.phase=st.phase;
       if(st.protein)S.settings.proteinTarget=st.protein; if(st.calories_training)S.settings.calT=st.calories_training; if(st.calories_rest)S.settings.calR=st.calories_rest;
       Object.entries(p.sessions).forEach(([k,v])=>{ if(v.exercises.length)S.templates[k]=v; });
       S.plans.push({date:today(),phase:S.settings.phase,raw:"imported"});
