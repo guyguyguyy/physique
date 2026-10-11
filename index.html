@@ -153,7 +153,7 @@ td.num,th.num{text-align:right}
 <script>
 "use strict";
 /* ================= storage ================= */
-const KEY="physique_v2"; const APP_VER="3.12";
+const KEY="physique_v2"; const APP_VER="3.13";
 const SESSION_KEYS=["pushHyp","pullHyp","legsHyp","pushHeavy","pullHeavy","legHeavy"];
 const SESSION_NAMES={pushHyp:"Push Hypertrophy",pullHyp:"Pull Hypertrophy",legsHyp:"Legs Hypertrophy",pushHeavy:"Push Heavy",pullHeavy:"Pull Heavy",legHeavy:"Leg Heavy"};
 let S;
@@ -224,7 +224,7 @@ function streak(){
 }
 
 /* ================= views ================= */
-let tab="home", active=null, editKey=null, editId=null, reviewText="", planMsg="", logDate=today(), addSess=false, planOpen=false, chart=null, chartRange=90, lastViewKey="";
+let calOff=0, tab="home", active=null, editKey=null, editId=null, reviewText="", planMsg="", logDate=today(), addSess=false, planOpen=false, chart=null, chartRange=90, lastViewKey="";
 const DRAFT="physique_v2_draft";
 function persistDraft(){ try{ if(active) localStorage.setItem(DRAFT,JSON.stringify({active,editId,ts:Date.now(),timerEnd:Timer.end>Date.now()?Timer.end:0})); else localStorage.removeItem(DRAFT); }catch(e){} }
 function restoreDraft(){ try{
@@ -247,7 +247,7 @@ function render(){
   if(key===lastViewKey) window.scrollTo(0,y); else window.scrollTo(0,0);
   lastViewKey=key;
 }
-document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{ tab=b.dataset.tab; logDate=today(); addSess=false; render(); });
+document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{ tab=b.dataset.tab; logDate=today(); addSess=false; calOff=0; render(); });
 window.pickDay=function(iso){ logDate=iso; addSess=false; tab="day"; render(); };
 window.editSession=function(id){ const x=S.sessions.find(v=>v.id===id); if(!x)return;
   active=JSON.parse(JSON.stringify(x)); active.entries.forEach(e=>e.sets.forEach(st=>st.done=true));
@@ -262,8 +262,15 @@ function spark(data,w,h){
   const last=pts[pts.length-1].split(",");
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${pts.join(" ")}"/><circle cx="${last[0]}" cy="${last[1]}" r="3"/></svg>`;
 }
+window.calMove=function(d){ calOff=Math.min(0,calOff+d); render(); };
 function calendarHTML(){
-  const t=today(); const [Y,M]=t.split("-").map(Number);
+  const t=today(); const [tY,tM]=t.split("-").map(Number);
+  const md=new Date(tY,tM-1+calOff,1), Y=md.getFullYear(), M=md.getMonth()+1;
+  const nav=`<div class="row" style="margin-bottom:12px">
+    <button class="btn btn-ghost btn-sm" style="width:auto;padding:6px 14px" onclick="calMove(-1)" aria-label="Previous month">‹</button>
+    <b class="grow" style="text-align:center;text-transform:uppercase;letter-spacing:.06em">${md.toLocaleDateString("en-GB",{month:"long",year:"numeric"})}</b>
+    ${calOff<0?`<button class="btn btn-ghost btn-sm" style="width:auto;padding:6px 14px" onclick="calMove(1)" aria-label="Next month">›</button>`:`<span style="width:44px"></span>`}
+  </div>`;
   const first=new Date(Y,M-1,1); const nDays=new Date(Y,M,0).getDate();
   let off=(first.getDay()+6)%7; // monday start
   const wd=["M","T","W","T","F","S","S"].map(d=>`<div class="wd">${d}</div>`).join("");
@@ -278,7 +285,7 @@ function calendarHTML(){
     const st=future?"future":(isRest?"rest":dayState(iso));
     cells+=`<div class="day ${st}${iso===t?" today":""}" ${future?"":`onclick="pickDay('${iso}')" style="cursor:pointer"`}>${d}${(!isRest&&trained)?'<div class="dot"></div>':""}</div>`;
   }
-  return `<div class="cal">${wd}${cells}</div>
+  return `${nav}<div class="cal">${wd}${cells}</div>
   <div class="row tiny muted" style="margin-top:10px;gap:14px;flex-wrap:wrap">
     <span><span style="color:var(--volt)">■</span> logged</span>
     <span><span style="color:var(--amber)">■</span> partial</span>
@@ -369,7 +376,7 @@ function viewHome(){
     <div class="line2"><span class="mega display">PHYSIQUE</span><span class="chip volt">${esc(S.settings.phase)}</span></div>
   </div>
   ${setupNeeded?`<div class="card" style="border-color:var(--volt)"><b>Set up your plan.</b><div class="small muted" style="margin:4px 0 10px">Import your starter file in <b>Data → Import</b>, or paste a plan in <b>Review</b>.</div><button class="btn btn-volt btn-sm" onclick="tab='data';render()">Go to Data</button></div>`:""}
-  <h2>This month · tap a day to log or edit</h2>
+  <h2>Calendar · tap a day to log or edit</h2>
   <div class="card">${calendarHTML()}</div>
   <h2>Body trend</h2>
   <div class="statgrid">
@@ -739,26 +746,50 @@ function generateReview(){
   L.push("");
   L.push("## INSTRUCTIONS FOR COACH (ChatGPT)");
   L.push("");
-  L.push("You are my evidence-based physique coach. Review the data above. Separate facts from interpretation. Do not invent numbers. Where data is UNKNOWN, say so. Then reply with next block's plan using EXACTLY this format (plain text, no markdown fences):");
+  L.push("You are my evidence-based physique coach. Review the data above together with the rulebook and phase in my project files. Separate facts from interpretation. Do not invent numbers. Where data is UNKNOWN, say so.");
   L.push("");
-  L.push(planFormatSpec());
+  L.push(replyContract());
   return L.join("\n");
 }
-function planFormatSpec(){
+function replyContract(){
   return [
+"REPLY FORMAT — three parts, in this order. Plain text inside the blocks: no tables, no bold, no code fences.",
+"",
+"## COACH VERDICT",
+"Plain language for me: what the data shows, what you think it means, what I should do.",
+"",
+"DECISION",
+"date: <YYYY-MM-DD>",
+"type: <continue | adjust | phase-change>",
+"phase: <exact phase name>",
+"summary: <one line>",
+"changes:",
+"- <each change with old -> new values, or: none>",
+"reason:",
+"- <why, citing the data>",
+"expected_outcome:",
+"- <what should happen if this works>",
+"watch:",
+"- <what to check before the next decision>",
+"rule_changes: <none, or each rule added / changed / removed with its full text>",
+"phase_changes: <none, or what changes: objective, targets, rule set, exit criteria>",
+"END DECISION",
+"",
 "PHYSIQUE PLAN",
-"phase: <phase name>",
-"protein: <target, e.g. 160-170 g>",
+"phase: <exact phase name>",
+"protein: <e.g. 160-170 g>",
 "calories_training: <e.g. 1750-1850 kcal>",
 "calories_rest: <e.g. 1600-1700 kcal>",
 "",
 "[Push Heavy]",
-"Barbell Bench Press | 4x5-6 | 45 kg",
-"<exercise> | <sets>x<reps or low-high> | <load> <kg|lb> | <optional flags: hold, per-side, inc=1.25>",
-"abs: <abs plan>",
-"cardio: <cardio plan>",
+"<exercise> | <sets>x<reps or low-high> | <load> <kg|lb> | <optional flags: hold, per-side>",
+"abs: <prescription or none>",
+"cardio: <prescription or none>",
 "",
-"(repeat one [Session Name] block for each of my 6 sessions: Push Heavy, Pull Heavy, Leg Heavy, Push Hypertrophy, Pull Hypertrophy, Legs Hypertrophy — keep exercises unchanged unless you deliberately change them)"].join("\n");
+"(one [Session] block for each of: Push Heavy, Pull Heavy, Leg Heavy, Push Hypertrophy, Pull Hypertrophy, Legs Hypertrophy)",
+"END PHYSIQUE PLAN",
+"",
+"Include the PHYSIQUE PLAN only when the plan changes. When you include it, include all 6 sessions and copy every session you are not changing exactly from my current plan. Never convert kg and lb."].join("\n");
 }
 function keyForName(n){
   const x=n.toLowerCase();
@@ -769,9 +800,16 @@ function keyForName(n){
   if(/leg/.test(x)) return /hyp/.test(x)?"legsHyp":"legHeavy";
   return null;
 }
+// lines of a block that starts with a standalone header line and ends at "END <header>", a ===== section, or the end
+function blockLines(text,name){
+  const lines=text.split(/\r?\n/), head=new RegExp("^[#*\\s]*"+name+"[*\\s:]*$","i"), stop=new RegExp("^[#*\\s]*END "+name+"[*\\s]*$","i");
+  const i=lines.findIndex(l=>head.test(l)); if(i<0) return null;
+  const out=[]; for(const l of lines.slice(i+1)){ if(stop.test(l)||/^=====/.test(l.trim())) break; out.push(l); }
+  return out;
+}
 function parsePlan(text){
-  if(!/PHYSIQUE PLAN/i.test(text)) return {err:"Missing 'PHYSIQUE PLAN' header"};
-  const lines=text.split(/\r?\n/);
+  const lines=blockLines(text,"PHYSIQUE PLAN");
+  if(!lines) return {err:"Missing 'PHYSIQUE PLAN' header"};
   const plan={settings:{},sessions:{}};
   let cur=null;
   for(let raw of lines){
@@ -804,6 +842,11 @@ function parsePlan(text){
 }
 window.applyPlan=function(){
   const txt=document.getElementById("planPaste").value;
+  if(!blockLines(txt,"PHYSIQUE PLAN")){
+    if(!blockLines(txt,"DECISION")){ planMsg="Nothing to save — paste ChatGPT's whole reply (it needs a DECISION or PHYSIQUE PLAN block)."; toast("Not saved",true); render(); return; }
+    S.plans.push({date:today(),phase:S.settings.phase,raw:txt,kind:"decision"}); save();
+    planMsg="Saved: decision recorded · plan unchanged"; document.getElementById("planPaste").value=""; toast("Decision saved"); render(); return;
+  }
   const r=parsePlan(txt);
   if(r.err){ planMsg=r.err; toast("Plan not applied",true); render(); return; }
   const p=r.plan;
@@ -813,9 +856,9 @@ window.applyPlan=function(){
   if(st.calories_training)S.settings.calT=st.calories_training;
   if(st.calories_rest)S.settings.calR=st.calories_rest;
   Object.entries(p.sessions).forEach(([k,v])=>{ if(v.exercises.length) S.templates[k]=v; });
-  S.plans.push({date:today(),phase:S.settings.phase,raw:txt});
+  S.plans.push({date:today(),phase:S.settings.phase,raw:txt,kind:"plan"});
   save();
-  planMsg="Applied: "+Object.keys(p.sessions).length+" sessions updated · phase "+S.settings.phase;
+  planMsg="Applied: "+Object.keys(p.sessions).length+" sessions updated · phase "+S.settings.phase+(blockLines(txt,"DECISION")?" · decision recorded":"");
   toast("Plan applied"); render();
 };
 window.genReview=function(){ reviewText=generateReview(); render(); };
@@ -831,16 +874,16 @@ function viewReview(){
     ${reviewText?`<textarea rows="12" style="margin-top:12px" readonly>${esc(reviewText)}</textarea>
     <div class="row" style="margin-top:10px"><button class="btn btn-sm grow" onclick="copyReview()">Copy</button><button class="btn btn-sm grow btn-ghost" onclick="shareReview()">Share</button></div>`:""}
   </div>
-  <h2>2 · New plan</h2>
+  <h2>2 · ChatGPT's reply</h2>
   ${planOpen?`<div class="card">
-    <div class="small muted" style="margin-bottom:10px">Paste ChatGPT's PHYSIQUE PLAN reply. Templates, targets and review date update automatically. Old plans are kept.</div>
-    <textarea id="planPaste" rows="7" placeholder="PHYSIQUE PLAN&#10;phase: ...&#10;[Push Heavy]&#10;Barbell Bench Press | 4x5-6 | 45 kg"></textarea>
+    <div class="small muted" style="margin-bottom:10px">Paste ChatGPT's whole reply. A PHYSIQUE PLAN updates your plan right away; the DECISION is saved and goes to your files at the next sync.</div>
+    <textarea id="planPaste" rows="7" placeholder="## COACH VERDICT&#10;…&#10;DECISION&#10;…&#10;END DECISION&#10;PHYSIQUE PLAN&#10;…&#10;END PHYSIQUE PLAN"></textarea>
     <div style="height:10px"></div>
-    <button class="btn btn-volt" onclick="applyPlan()">Apply plan</button>
-    ${planMsg?`<div class="small" style="margin-top:10px;color:${planMsg.startsWith("Applied")?"var(--green)":"var(--red)"}">${esc(planMsg)}</div>`:""}
-  </div>`:`<button class="btn btn-ghost" onclick="planOpen=true;render()">Paste new plan from ChatGPT…</button>`}
-  <h2>Plan history</h2>
-  ${S.plans.length?[...S.plans].reverse().map(p=>`<div class="card row"><div class="grow"><b>${esc(p.phase)}</b><div class="tiny muted">applied ${esc(p.date)}</div></div></div>`).join(""):'<div class="card small muted">No plans applied yet.</div>'}`;
+    <button class="btn btn-volt" onclick="applyPlan()">Save reply</button>
+    ${planMsg?`<div class="small" style="margin-top:10px;color:${/^(Applied|Saved)/.test(planMsg)?"var(--green)":"var(--red)"}">${esc(planMsg)}</div>`:""}
+  </div>`:`<button class="btn btn-ghost" onclick="planOpen=true;render()">Paste ChatGPT's reply…</button>`}
+  <h2>History</h2>
+  ${S.plans.length?[...S.plans].reverse().map(p=>`<div class="card row"><div class="grow"><b>${esc(p.phase)}</b><div class="tiny muted">${p.kind==="decision"?"decision only":"plan applied"} · ${esc(p.date)}</div></div></div>`).join(""):'<div class="card small muted">Nothing saved yet.</div>'}`;
 }
 
 window.copyDay=function(){
