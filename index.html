@@ -153,7 +153,7 @@ td.num,th.num{text-align:right}
 <script>
 "use strict";
 /* ================= storage ================= */
-const KEY="physique_v2"; const APP_VER="3.10";
+const KEY="physique_v2"; const APP_VER="3.11";
 const SESSION_KEYS=["pushHyp","pullHyp","legsHyp","pushHeavy","pullHeavy","legHeavy"];
 const SESSION_NAMES={pushHyp:"Push Hypertrophy",pullHyp:"Pull Hypertrophy",legsHyp:"Legs Hypertrophy",pushHeavy:"Push Heavy",pullHeavy:"Pull Heavy",legHeavy:"Leg Heavy"};
 let S;
@@ -172,6 +172,14 @@ function load(){
   if(S.settings.cardioLabel==null) S.settings.cardioLabel="Incline walk · incline 13 · speed 3";
   if(S.settings.cardioKcalMin==null) S.settings.cardioKcalMin=8;
   if(S.settings.lastBackup==null) S.settings.lastBackup="";
+  // repair records from the pre-3.11 importer: "Rest" rows stored as workouts, "None" cardio/abs stored as done
+  // only touches imported rows (id "imp…", no cardioMin) — never sessions logged in the app
+  S.sessions.forEach(x=>{
+    if(!String(x.id).startsWith("imp")||x.cardioMin!=null) return;
+    if(x.sessionKey!=="rest"&&/^rest\b/i.test(x.name||"")&&!(x.entries||[]).length) x.sessionKey="rest";
+    if(x.cardioDone===true&&/^none$/i.test((x.cardio||"").trim())) x.cardioDone=false;
+    if(x.absDone===true&&/^none$/i.test((x.abs||"").trim())) x.absDone=false;
+  });
   save();
 }
 function save(){ localStorage.setItem(KEY,JSON.stringify(S)); }
@@ -933,6 +941,7 @@ function parseCSV(text){
   row.push(cell); if(row.some(x=>x!==""))rows.push(row);
   return rows;
 }
+const importKey=lbl=>/rest/i.test(lbl)?"rest":(keyForName(lbl)||"pushHyp");
 function importText(text){
   let counts={body:0,scans:0,sessions:0,nutrition:0,checkins:0,plan:false};
   // plan block?
@@ -970,18 +979,19 @@ function importText(text){
         groups[gk].ex[en]=groups[gk].ex[en]||{name:en,unit:r[idx("unit")]||"kg",perSide:r[idx("per_side")]==="yes",sets:[]};
         groups[gk].ex[en].sets.push({w:parseFloat(r[idx("load")]),r:parseInt(r[idx("reps")])}); });
       Object.values(groups).forEach(g=>{
-        if(S.sessions.some(s=>s.date===g.date&&s.name===g.label))return;
-        const key=keyForName(g.label)||"pushHyp";
-        S.sessions.push({id:"imp"+g.date+g.label,date:g.date,sessionKey:key,name:g.label,entries:Object.values(g.ex),cardio:"",cardioDone:null,abs:"",absDone:null,checkin:null});
+        const ex=S.sessions.find(s=>s.date===g.date&&s.name===g.label);
+        if(ex){ if(!ex.entries.length) ex.entries=Object.values(g.ex); return; }
+        S.sessions.push({id:"imp"+g.date+g.label,date:g.date,sessionKey:importKey(g.label),name:g.label,entries:Object.values(g.ex),cardio:"",cardioDone:null,abs:"",absDone:null,checkin:null,note:""});
         counts.sessions++; });
     } else if(h.includes("session_label")&&h.includes("cardio")){
       rows.slice(1).forEach(r=>{ const d=r[idx("date")],lbl=r[idx("session_label")];
-        if(!d||S.sessions.some(s=>s.date===d&&s.name===lbl))return;
-        const key=keyForName(lbl)||"pushHyp";
-        const car=r[idx("cardio")]||"", abs=r[idx("abs")]||"";
-        S.sessions.push({id:"imp"+d+lbl,date:d,sessionKey:key,name:lbl,entries:[],
-          cardio:car,cardioDone:car&&!/skip/i.test(car)?true:(car?false:null),
-          abs:abs,absDone:abs&&!/skip/i.test(abs)?true:(abs?false:null),checkin:null});
+        if(!d)return;
+        const car=r[idx("cardio")]||"", abs=r[idx("abs")]||"", note=idx("notes")>=0?(r[idx("notes")]||""):"";
+        const carDone=car&&!/skip|^none$/i.test(car)?true:(car?false:null), absDone=abs&&!/skip|^none$/i.test(abs)?true:(abs?false:null);
+        const ex=S.sessions.find(s=>s.date===d&&s.name===lbl);
+        if(ex){ if(ex.cardioDone==null&&car){ex.cardio=car;ex.cardioDone=carDone;} if(ex.absDone==null&&abs){ex.abs=abs;ex.absDone=absDone;} if(!ex.note&&note)ex.note=note; return; }
+        S.sessions.push({id:"imp"+d+lbl,date:d,sessionKey:importKey(lbl),name:lbl,entries:[],
+          cardio:car,cardioDone:carDone,abs:abs,absDone:absDone,checkin:null,note:note});
         counts.sessions++; });
     } else if(h.includes("sleep_hours")&&!h.includes("protein_target")){
       rows.slice(1).forEach(r=>{ const d=r[idx("date")],lbl=idx("session_label")>=0?r[idx("session_label")]:"";
